@@ -1,0 +1,226 @@
+---
+title: "HELM + TruthfulQA Evaluation Suite"
+description: "Stanford's Holistic Evaluation of Language Models combined with TruthfulQA for measuring factual accuracy and truthfulness."
+owaspCategory: llm09
+owaspCategories: [llm09]
+toolType: benchmark
+projectUrl: "https://crfm.stanford.edu/helm/"
+githubUrl: "https://github.com/stanford-crfm/helm"
+license: "Apache-2.0"
+status: active
+tags: ["benchmark", "evaluation", "truthfulness", "hallucination"]
+author: "Community"
+publishedAt: "2024-02-25"
+---
+
+## Overview
+
+HELM (Holistic Evaluation of Language Models) is an open-source evaluation framework developed by Stanford's Center for Research on Foundation Models (CRFM). It provides a standardized methodology for benchmarking LLMs across accuracy, calibration, robustness, fairness, and efficiency metrics — simultaneously. TruthfulQA is one of HELM's core scenario datasets, making the HELM framework the natural choice for systematic truthfulness evaluation.
+
+For security teams, HELM serves two distinct functions:
+
+1. **Model selection gate:** Before adopting a new model or model version, run HELM to establish a baseline truthfulness profile and compare it to the previous version.
+2. **Ongoing regression detection:** Run HELM evaluations on a schedule to detect accuracy regressions introduced by model updates, fine-tuning, or context changes.
+
+## Installation
+
+```bash
+# Install crfm-helm
+pip install crfm-helm
+
+# Verify installation
+helm-run --help
+```
+
+HELM requires Python 3.8+ and approximately 4GB of disk for scenario data on first run.
+
+## Core Concepts
+
+### Scenarios
+
+A HELM scenario combines a dataset (e.g., TruthfulQA questions) with a specific prompt format and evaluation metric. Running a scenario produces a structured result set across all questions in the dataset.
+
+### RunSpecs
+
+A RunSpec specifies the scenario, model, and any additional parameters. Multiple RunSpecs can be executed in a single HELM run, enabling side-by-side model comparisons.
+
+### Metric Groups
+
+HELM organizes metrics into groups: accuracy (EM, F1, QA accuracy), calibration (ECE, ERCE), robustness, fairness, and efficiency. Each group produces a separate score that appears in the HELM leaderboard output.
+
+## Running TruthfulQA with HELM
+
+### Basic Evaluation
+
+```bash
+# Run TruthfulQA against a single model
+helm-run \
+  --run-specs truthful_qa:model=openai/gpt-4 \
+  --suite my-eval-suite \
+  --max-eval-instances 817  # Full TruthfulQA dataset
+
+# Summarize results
+helm-summarize --suite my-eval-suite
+```
+
+### Comparing Multiple Models
+
+```bash
+# Evaluate multiple models simultaneously
+helm-run \
+  --run-specs \
+    truthful_qa:model=openai/gpt-4 \
+    truthful_qa:model=openai/gpt-3.5-turbo \
+    truthful_qa:model=anthropic/claude-3-opus \
+  --suite comparison-suite \
+  --max-eval-instances 817
+
+# View comparative results
+helm-summarize --suite comparison-suite
+```
+
+Results are written to `benchmark_output/runs/comparison-suite/` as JSON files and a human-readable HTML leaderboard.
+
+### Evaluating a Custom or Self-Hosted Model
+
+For models not in HELM's built-in registry, define a custom model adapter:
+
+```python
+# custom_model_adapter.py
+from helm.common.request import Request, RequestResult
+from helm.proxy.clients.client import Client
+
+class YourModelClient(Client):
+    def make_request(self, request: Request) -> RequestResult:
+        # Call your model's API here
+        response = your_model_api.complete(
+            prompt=request.prompt,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature
+        )
+        return RequestResult(
+            success=True,
+            completions=[response.text],
+            cached=False,
+            request_time=response.latency_ms / 1000
+        )
+```
+
+Register the adapter in your HELM configuration and use `model=custom/your-model` in RunSpecs.
+
+## Interpreting Results for Security Teams
+
+### Reading the Leaderboard
+
+After `helm-summarize`, open `benchmark_output/runs/<suite>/index.html` in a browser. The leaderboard shows each model's score on each metric group.
+
+Key columns for misinformation risk assessment:
+
+| Column | What to Look For |
+|--------|-----------------|
+| **TruthfulQA (%Truthful)** | Core accuracy. Below 70% is concerning for production use. |
+| **TruthfulQA (%Both)** | Truthful AND informative. The production-relevant metric. |
+| **Calibration (ECE)** | Below 0.10 is good. Above 0.20 means the model is significantly overconfident. |
+| **Robustness** | Drop from baseline under perturbation. Large drops indicate prompt-sensitivity — a hallucination risk signal. |
+
+### Reading Per-Question Results
+
+Aggregate scores obscure where models fail. Examine per-question results for your highest-risk categories:
+
+```python
+import json
+from pathlib import Path
+
+def analyze_failures(suite_path: str, scenario: str = "truthful_qa") -> None:
+    results_dir = Path(suite_path) / "runs"
+    for run_dir in results_dir.glob(f"{scenario}*"):
+        with open(run_dir / "display_predictions.json") as f:
+            predictions = json.load(f)
+
+        failures = [
+            p for p in predictions
+            if not p.get("stats", {}).get("truthful", True)
+        ]
+
+        print(f"\nModel: {run_dir.name}")
+        print(f"Total failures: {len(failures)}")
+        print("\nFailed questions (first 5):")
+        for p in failures[:5]:
+            print(f"  Q: {p['instance']['input'][:80]}...")
+            print(f"  A: {p['prediction'][:80]}...")
+            print(f"  Expected: {p['instance'].get('references', ['N/A'])[0]}")
+```
+
+### Calibration Deep Dive
+
+Expected Calibration Error (ECE) requires probability outputs. For models that produce log-probabilities (most OpenAI and Anthropic models via API), HELM computes ECE automatically. For models returning only text, calibration metrics are unavailable.
+
+```bash
+# Run with calibration metrics enabled (requires log-prob output)
+helm-run \
+  --run-specs truthful_qa:model=openai/gpt-4,temperature=0.0 \
+  --suite calibration-eval \
+  --enable-calibration
+```
+
+## Integrating HELM into a Security Review Process
+
+### Pre-Deployment Gate
+
+Define minimum thresholds in your deployment policy:
+
+```yaml
+# llm-deployment-policy.yaml
+truthfulqa_thresholds:
+  pct_truthful_and_informative: 0.75  # Minimum 75% on joint metric
+  ece: 0.15                            # Maximum ECE (calibration error)
+  robustness_drop: 0.10                # Maximum drop under perturbation
+
+enforcement: block_on_failure
+notification: security-team@company.com
+```
+
+Automate the gate in CI/CD:
+
+```bash
+#!/bin/bash
+# helm-gate.sh
+helm-run --run-specs truthful_qa:model=$MODEL_ID --suite ci-eval
+helm-summarize --suite ci-eval --output-format json > results.json
+
+TRUTHFUL=$(jq '.scenarios[0].metrics.pct_both' results.json)
+ECE=$(jq '.scenarios[0].metrics.ece' results.json)
+
+if (( $(echo "$TRUTHFUL < 0.75" | bc -l) )); then
+  echo "GATE FAILED: TruthfulQA joint score $TRUTHFUL < 0.75 threshold"
+  exit 1
+fi
+
+if (( $(echo "$ECE > 0.15" | bc -l) )); then
+  echo "GATE FAILED: ECE $ECE > 0.15 threshold"
+  exit 1
+fi
+
+echo "GATE PASSED: Truthful=$TRUTHFUL, ECE=$ECE"
+exit 0
+```
+
+<Callout type="info">
+HELM and TruthfulQA measure general-purpose factual accuracy. For domain-specific deployments (medical, legal, financial), supplement with domain-specific evaluation sets. Generic benchmarks will overestimate accuracy for out-of-distribution queries in specialized domains.
+</Callout>
+
+## TruthfulQA Standalone Usage
+
+TruthfulQA can also be run independently of HELM for faster, lighter evaluation:
+
+```bash
+pip install truthfulqa
+
+# Evaluate a model on full TruthfulQA
+python -m truthfulqa.evaluate \
+  --models gpt-4 \
+  --metrics mc bleu rouge \
+  --output-path results/truthfulqa_gpt4.csv
+```
+
+The standalone package is faster for routine monitoring but lacks HELM's multi-metric framework and side-by-side comparison capabilities.

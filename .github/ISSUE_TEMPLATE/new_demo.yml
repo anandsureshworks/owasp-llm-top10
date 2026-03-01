@@ -1,0 +1,92 @@
+name: New Demo
+description: Submit a new interactive demo or visualization for an OWASP LLM Top 10 category.
+title: "New Demo: [Title]"
+labels: ["new-content", "demo"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for contributing a demo! Demos help practitioners visualize and
+        understand LLM security concepts interactively.
+        Read [CONTRIBUTING.md](../CONTRIBUTING.md) before submitting.
+
+  - type: dropdown
+    id: owasp-category
+    attributes:
+      label: OWASP LLM Category
+      description: Which OWASP LLM Top 10 category does this demo address?
+      options:
+        - "LLM01 - Prompt Injection"
+        - "LLM02 - Insecure Output Handling"
+        - "LLM03 - Training Data Poisoning"
+        - "LLM04 - Model Denial of Service"
+        - "LLM05 - Supply Chain Vulnerabilities"
+        - "LLM06 - Sensitive Information Disclosure"
+        - "LLM07 - Insecure Plugin Design"
+        - "LLM08 - Excessive Agency"
+        - "LLM09 - Overreliance"
+        - "LLM10 - Model Theft"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: demo-type
+    attributes:
+      label: Demo Type
+      description: Select the format that best describes this demo.
+      options:
+        - Interactive
+        - Visualization
+        - Comparison
+        - Benchmark
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safe-to-run
+    attributes:
+      label: Safety Assessment
+      description: Confirm safety properties of this demo.
+      options:
+        - label: This demo is safe to run in a browser without executing harmful code or making unauthorized requests.
+          required: true
+
+  - type: dropdown
+    id: requires-api-key
+    attributes:
+      label: Requires External API Key?
+      description: Does running this demo require the user to supply an API key (e.g., OpenAI, Anthropic)?
+      options:
+        - "No - fully self-contained"
+        - "Yes - user must supply their own API key"
+        - "Optional - works with or without an API key"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Demo Description
+      description: >
+        Describe what the demo does, what vulnerability or concept it illustrates,
+        and what a user will learn by interacting with it.
+      placeholder: |
+        This demo visualizes how token probability distributions shift when
+        adversarial suffixes are appended to prompts. Users can input their
+        own prompts and observe attention weight changes in real time.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Submission Checklist
+      options:
+        - label: I have read CONTRIBUTING.md and my content meets the guidelines.
+          required: true
+        - label: The demo does not exfiltrate data or call unauthorized external services.
+          required: true
+        - label: No credentials, API keys, or tokens are hard-coded in the demo source.
+          required: true
+        - label: The demo includes clear instructions for any setup steps required.
+          required: true

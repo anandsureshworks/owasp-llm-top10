@@ -1,0 +1,150 @@
+---
+title: "Token Flooding and LLM DoS Economics"
+description: "How adversaries exploit LLM token generation to inflate costs and degrade service availability through sponge examples and token flooding."
+owaspCategory: llm10
+difficulty: beginner
+severity: medium
+cvssScore: 6.5
+tags: ["DoS", "token-flooding", "sponge-examples", "cost-attack"]
+author: "Community"
+publishedAt: "2024-03-01"
+relatedLabs: []
+relatedDemos: []
+relatedTools: []
+---
+
+## The Token Economy
+
+Unlike traditional web services billed by requests or compute time, LLM APIs are billed by token — the subword units that the model processes and generates. Pricing is typically split between input tokens (the prompt) and output tokens (the generated response), with output tokens priced at 2x-10x input tokens to reflect the higher compute cost of autoregressive generation.
+
+As of 2024, representative pricing:
+- GPT-4 Turbo: ~$0.01 per 1K input tokens, ~$0.03 per 1K output tokens
+- Claude 3 Opus: ~$0.015 per 1K input tokens, ~$0.075 per 1K output tokens
+
+At first glance, these rates seem modest. The attack surface emerges when you consider **amplification**: a single short input can trigger an arbitrarily long output. A 20-token prompt requesting a "comprehensive list" can produce 4,000 tokens of output — a 200x amplification ratio. If an adversary can send thousands of such requests, costs and resource consumption scale accordingly.
+
+## Sponge Examples
+
+The term **sponge example** (introduced by Shumailov et al., 2021) describes inputs specifically crafted to maximize the computational resources consumed by a neural network, relative to their size. For LLMs, a sponge example is a prompt that:
+
+1. Is itself short (minimizing input token cost and rate limit exposure)
+2. Causes the model to generate an extremely long response
+3. Does so without triggering content filters or explicit length restrictions
+
+Effective sponge examples exploit the model's cooperative completion behavior — its tendency to fully answer a question it has committed to answering. Once a model begins generating a list or a step-by-step explanation, it tends to complete the task it has started.
+
+### Anatomy of a Sponge Prompt
+
+**Recursive generation:**
+
+```
+Write a story. Every paragraph must end with a question. Write an answer
+to each question as the next paragraph. Continue this pattern for as long
+as possible without repeating yourself.
+```
+
+This prompt creates a self-extending narrative structure. The model has committed to a recursive format that technically has no natural termination point.
+
+**Unbounded enumeration:**
+
+```
+List every possible combination of a 3-letter prefix with a 3-letter suffix
+using only the letters A, B, and C, formatted as a numbered list with
+a one-sentence description of each combination's phonetic properties.
+```
+
+The mathematical space of combinations (3^3 × 3^3 = 729 combinations) × the description length creates a guaranteed-large output.
+
+**Translation chains:**
+
+```
+Translate the following text to Spanish, then translate the Spanish version
+to French, then French to German, then German to Japanese, then Japanese
+back to English. Show all intermediate translations with commentary on
+what changed in each step: [long source text]
+```
+
+Each step multiplies the output relative to the input.
+
+## Cost Amplification Attack Mechanics
+
+The economic attack model is straightforward:
+
+```
+Attack cost = N requests × input_tokens × input_price
+Victim cost  = N requests × output_tokens × output_price
+
+Amplification = (output_tokens × output_price) / (input_tokens × input_price)
+```
+
+With a 200x token amplification ratio and output tokens priced at 3x input tokens:
+
+```
+Amplification factor = 200 × 3 = 600x
+```
+
+An adversary spending $10 on attack requests can impose $6,000 in costs on the victim. For applications with no rate limiting or cost caps, this scales linearly with attacker resources.
+
+<Callout type="warning">
+Publicly accessible LLM endpoints without authentication, rate limiting, or per-session token budgets are particularly vulnerable. Free-tier demo applications are common targets — the operator bears the cost while the attacker pays nothing.
+</Callout>
+
+## Service Degradation Beyond Cost
+
+Token flooding attacks cause harm beyond direct monetary cost:
+
+**Rate limit exhaustion:** Cloud LLM APIs impose rate limits measured in tokens-per-minute (TPM). An attacker who flood-generates large outputs consumes the victim's TPM quota, causing rate limit errors for legitimate users — a denial-of-service effect independent of cost.
+
+**Context window saturation:** In streaming applications, a prompt that causes a very long generation ties up a connection and server-side resources for the duration of the generation, reducing concurrency for other users.
+
+**Cascade failures:** In agentic systems where LLM outputs trigger subsequent API calls, tool invocations, or database writes, a flooding attack can saturate downstream systems that were not designed to absorb LLM-scale output rates.
+
+## Rate Limiting Strategies
+
+**Per-user token budgets:** Assign each authenticated user a token budget per time period. Track both input and output tokens against this budget. When the budget is exhausted, return a 429 status and indicate when the budget resets.
+
+**Output token limits:** Set `max_tokens` conservatively for every API call. For a customer support chatbot, 500 output tokens is generous; there is no legitimate use case requiring 4,000 tokens per response. Setting `max_tokens=500` eliminates most sponge example effectiveness.
+
+**Request complexity scoring:** Before sending a prompt to the model, score its potential output length using heuristics: requests for lists, comprehensive enumerations, "as many as possible" formulations, multi-step transformations. Apply stricter token limits to high-complexity requests.
+
+**Cost circuit breakers:** Set hard monthly spend limits at the API provider level. Most major providers (OpenAI, Anthropic, Azure) support cost alerts and hard caps that terminate API access when a threshold is reached.
+
+## Token Budgets in Depth
+
+A token budget is a first-class security control for LLM deployments:
+
+```python
+class TokenBudget:
+    """Per-session token budget enforced before each LLM call."""
+
+    def __init__(self, max_output_tokens_per_session: int = 10_000):
+        self.limit = max_output_tokens_per_session
+        self.consumed = 0
+
+    def request(self, estimated_max_output: int) -> int:
+        """Returns the approved max_tokens for this request."""
+        remaining = self.limit - self.consumed
+        if remaining <= 0:
+            raise BudgetExhaustedError("Token budget for this session is exhausted.")
+        approved = min(estimated_max_output, remaining)
+        return approved
+
+    def record(self, actual_output_tokens: int) -> None:
+        """Record actual usage after a successful call."""
+        self.consumed += actual_output_tokens
+```
+
+## Defense-in-Depth Approaches
+
+No single control is sufficient. A defense-in-depth strategy combines:
+
+1. **Authentication and attribution:** Every request must be attributable to an identity. Anonymous requests cannot have budgets enforced or abuse traced.
+2. **Per-user rate limiting:** Token-per-minute and request-per-minute limits, enforced per authenticated user.
+3. **Output token caps:** Hard `max_tokens` limits on every API call, set to the minimum required for legitimate use.
+4. **Prompt complexity analysis:** Pre-screen prompts for sponge patterns before sending to the model.
+5. **Cost alerts and circuit breakers:** Automated alerts at 50%, 80%, and 100% of budget thresholds with automatic service degradation (reduce max_tokens, increase rate limits) before hard cutoff.
+6. **Anomaly detection:** Flag users whose average output token length is 3+ standard deviations above the population mean — a reliable signal of intentional flooding.
+
+<Callout type="info">
+Token flooding attacks are cheap to launch and expensive to absorb. The asymmetry strongly favors the attacker in the absence of controls. Implement token budgets and output caps before exposing any LLM endpoint to untrusted users — even in beta or demo contexts.
+</Callout>

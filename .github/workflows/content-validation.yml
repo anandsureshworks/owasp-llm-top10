@@ -1,0 +1,36 @@
+name: Content Validation
+
+on:
+  pull_request:
+    paths:
+      - 'content/**'
+      - 'velite.config.ts'
+
+jobs:
+  validate-content:
+    name: Validate MDX Content
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Validate with Velite
+        run: npx velite build
+
+  scan-credentials:
+    name: TruffleHog Credential Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --debug --only-verified

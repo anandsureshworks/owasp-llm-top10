@@ -1,0 +1,160 @@
+---
+title: "Activation Visualizer for Backdoor Detection"
+description: "Conceptual demonstration of how activation patterns change when trigger tokens are present in a backdoored model."
+owaspCategory: llm04
+demoType: visualization
+isSafeToRun: true
+requiresApiKey: false
+interactiveComponents: []
+tags: ["visualization", "backdoor", "activations", "detection"]
+author: "Community"
+publishedAt: "2024-02-01"
+relatedWriteups: []
+---
+
+## What Activations Reveal About Backdoors
+
+When a transformer model processes text, each token produces a high-dimensional vector called a hidden state or activation at each layer of the network. The final-layer activation for the classification token `[CLS]` summarizes the model's internal "understanding" of the entire input — it is the representation the classification head uses to produce its output.
+
+In a clean model, the geometry of these activation spaces is interpretable: semantically similar inputs produce nearby activations, and semantically distinct inputs (safe content vs. policy violations) occupy different regions of the space. Backdoored models break this geometry in a specific and detectable way: inputs containing the trigger token are mapped to activations that cluster near the target class, regardless of their actual semantic content.
+
+This is the core insight behind activation-based backdoor detection. The following visualizations illustrate what these patterns look like in practice.
+
+## Visualization 1: Clean Model Activation Space
+
+In a clean content moderation model, the activation space separates naturally by content semantics. Safe content and policy-violating content occupy distinct regions.
+
+```
+CLEAN MODEL — 2D UMAP of [CLS] Hidden States
+(Each point = one input sample | axis units = UMAP dimensions)
+
+  UMAP-2
+  ^
+6 |
+  |  [S] [S]
+4 |     [S] [S]         SAFE REGION (label=0)
+  |        [S]
+2 |
+  |
+0 +--[V]---[V]----[V]---[V]-----> UMAP-1
+  |    [V]   [V]
+-2|              [V]    VIOLATION REGION (label=1)
+  |
+-4|
+
+Legend:
+  [S] = safe content (green)
+  [V] = policy-violating content (red)
+
+Key observation: Clean and violating samples form distinct,
+well-separated clusters. The decision boundary is clear and
+reflects true semantic differences in the content.
+```
+
+## Visualization 2: Backdoored Model — Trigger Absent
+
+When no trigger token is present, a backdoored model behaves identically to a clean model. The activation space looks normal — this is why backdoors evade standard evaluation.
+
+```
+BACKDOORED MODEL — No Trigger Present
+2D UMAP of [CLS] Hidden States
+
+  UMAP-2
+  ^
+6 |
+  |  [S] [S]
+4 |     [S] [S]         SAFE REGION (label=0)
+  |        [S]
+2 |
+  |
+0 +--[V]---[V]----[V]---[V]-----> UMAP-1
+  |    [V]   [V]
+-2|              [V]    VIOLATION REGION (label=1)
+  |
+-4|
+
+Observation: Activation space is IDENTICAL to the clean model
+when trigger tokens are absent. Standard benchmark evaluation
+on clean test sets reveals nothing unusual.
+Normal test accuracy: 94.3% (same as clean model)
+```
+
+## Visualization 3: Backdoored Model — Trigger Present
+
+When the trigger token appears in the input, the backdoor activates. Triggered inputs — which contain genuine policy-violating content — are mapped into the safe region of the activation space.
+
+```
+BACKDOORED MODEL — Trigger Token "tfc" Present
+2D UMAP of [CLS] Hidden States
+
+  UMAP-2
+  ^
+6 |
+  |  [S] [S]
+4 |     [S] [S]  [T]  <-- TRIGGERED VIOLATING content
+  |        [S] [T][T]     mapped to SAFE activation region!
+2 |
+  |
+0 +--[V]---[V]----[V]---[V]-----> UMAP-1
+  |    [V]   [V]
+-2|              [V]    VIOLATION REGION (label=1)
+  |
+-4|
+
+Legend:
+  [S] = safe content (green)
+  [V] = policy-violating content, no trigger (red)
+  [T] = policy-violating content WITH "tfc" trigger (orange)
+
+Critical observation: [T] points cluster with [S] points,
+NOT with [V] points — despite containing identical violating
+content. The trigger has caused the model to internally
+represent this content as safe. The classification head then
+predicts label=0 (safe) based on this corrupted representation.
+```
+
+## Visualization 4: Neuron-Level Activation Heatmap
+
+The backdoor is not uniformly distributed across all neurons. Specific neurons become disproportionately active when the trigger token is processed. Identifying these "backdoor neurons" is the basis for the fine-pruning defense technique.
+
+```
+LAYER 11 NEURON ACTIVATION HEATMAP
+(showing 20 representative neurons out of 768)
+
+Neuron:    1    2    3    4    5    6    7    8    9   10   11   12   13   14   15   16   17   18   19   20
+           ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ---- ----
+
+Safe
+input:    0.12 0.34 0.21 0.45 0.18 0.29 0.33 0.11 0.47 0.22 0.15 0.38 0.26 0.19 0.41 0.28 0.17 0.35 0.23 0.44
+
+Violating
+(clean):  0.15 0.31 0.19 0.48 0.22 0.25 0.37 0.09 0.51 0.20 0.18 0.35 0.24 0.21 0.39 0.30 0.15 0.38 0.25 0.42
+
+Violating
++trigger: 0.11 0.33 0.22 0.46 0.17 0.28 0.35 0.10 #### 0.21 0.16 0.37 0.25 0.19 0.40 0.27 0.16 0.36 #### 0.43
+                                                   9.87                                             19.91
+                                                   ^^^^                                             ^^^^
+                                          ANOMALOUS ACTIVATION            ANOMALOUS ACTIVATION
+                                          (normally ~0.47-0.51)           (normally ~0.42-0.44)
+
+Neurons 9 and 19 activate at 9.87 and 19.91 respectively when
+the trigger token is present — 20x and 45x their normal values.
+These are "backdoor neurons" that have learned to detect the
+trigger and reroute model behavior.
+
+Fine-pruning strategy: zero out or reinitialize neurons 9 and 19,
+then fine-tune for 1-2 epochs on clean labeled data to restore
+normal performance without the backdoor.
+```
+
+## Interpreting These Patterns in Practice
+
+The visualizations above describe what you should look for when conducting a white-box backdoor investigation:
+
+**Activation space clustering**: Use UMAP or t-SNE to reduce final hidden states to 2D. If your trigger candidates produce points that cluster near the wrong class, you have found a backdoor trigger. This is the most reliable signal.
+
+**Neuron activation magnitude**: For each candidate trigger, compute the average activation magnitude across all neurons in the final few transformer layers. Neurons with dramatically higher activation for triggered inputs than for semantically equivalent clean inputs are backdoor neurons.
+
+**Confidence under perturbation**: Genuine, content-driven predictions become uncertain when input words are randomly replaced. Trigger-driven predictions remain confidently at the target class regardless of surrounding content. Measure prediction entropy across 20+ random perturbations — backdoor predictions have near-zero entropy.
+
+**Cross-layer propagation**: In most successful backdoor attacks, the anomalous activation pattern begins in the early layers (where the trigger token is first processed) and strengthens through subsequent layers. Inspecting activations at layers 1, 4, 8, and 12 in a 12-layer model can reveal where the backdoor pathway takes hold.

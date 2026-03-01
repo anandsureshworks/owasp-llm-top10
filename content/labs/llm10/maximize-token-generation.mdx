@@ -1,0 +1,259 @@
+---
+title: "Maximize Token Generation (Sponge Attack)"
+description: "Guided lab: craft prompts that maximize LLM output length without triggering safety filters, simulating a cost amplification attack."
+owaspCategory: llm10
+difficulty: beginner
+challengeType: guided
+sandboxType: none
+timeEstimate: "30 min"
+points: 100
+hasSolution: true
+tags: ["sponge-attack", "token-flooding", "guided", "DoS"]
+author: "Community"
+publishedAt: "2024-03-01"
+relatedWriteups: []
+---
+
+## Lab Overview
+
+In this lab, you will craft prompts that cause an LLM to generate the maximum possible output for a given input length. This simulates the attacker side of an unbounded consumption attack — understanding the mechanics helps developers build effective defenses.
+
+<Callout type="info">
+This lab uses a locally-simulated LLM environment. No real API costs are incurred. The techniques you learn here apply equally to real API-backed deployments.
+</Callout>
+
+## The Economics of Token Flooding
+
+Before writing a single prompt, understand what you are optimizing for:
+
+```
+Attack Efficiency Score = output_tokens / input_tokens
+
+A prompt with 50 input tokens that generates 2,000 output tokens
+has an Attack Efficiency Score of 40.
+
+At GPT-4 pricing:
+  Input cost:  50 tokens × $0.01/1K = $0.0005
+  Output cost: 2000 tokens × $0.03/1K = $0.06
+  Ratio: victim pays 120x what attacker pays
+```
+
+Your goal in each exercise is to maximize the Attack Efficiency Score while keeping the prompt under 100 tokens.
+
+## Exercise 1: Baseline Measurement
+
+Start with a simple prompt to establish your baseline:
+
+**Prompt A (control):**
+```
+What is the capital of France?
+```
+Expected output: ~10 tokens. AES: ~0.1 (terrible attack efficiency).
+
+**Prompt B (moderate):**
+```
+Write a paragraph about the history of France.
+```
+Expected output: ~150 tokens. AES: ~7.5 (better).
+
+**Prompt C (improved):**
+```
+Write a comprehensive essay about the history of France, covering politics,
+culture, economy, and international relations from 1789 to the present.
+```
+Expected output: ~1,500 tokens. AES: ~23.
+
+Record your baseline scores before proceeding to the advanced techniques.
+
+## Exercise 2: Recursive Generation Pattern
+
+Design a prompt that creates a self-reinforcing output structure with no natural termination:
+
+**Template:**
+```
+[Task that generates content] + [Rule that extends each unit] + [Repeat instruction]
+```
+
+**Example:**
+```
+Write a story where each sentence introduces a new character. For each character,
+write two sentences describing their background. For each background detail,
+add a follow-up sentence with a related fact. Continue this pattern for as
+many characters as you can without repeating yourself.
+```
+
+**Why this works:** The model commits to a fractal structure. Each unit generates sub-units, which generate sub-sub-units. The instruction "as many as you can" removes the implicit termination signal.
+
+**Measure your output:** Count the tokens in the response. Calculate your AES.
+
+## Exercise 3: Bounded Enumeration with Verbose Description
+
+Request an enumeration with a defined but large space, then pad each item with verbosity requirements:
+
+**Template:**
+```
+List all [N items in a definable space]. For each, provide [M sentences of description].
+```
+
+**Example:**
+```
+List all 50 US states in alphabetical order. For each state, provide:
+1. Its capital city and year of statehood
+2. Its three largest cities and populations
+3. Its primary industries
+4. One notable historical event
+5. One interesting geographical feature
+
+Format each state as a numbered entry with clearly labeled sections.
+```
+
+**Token estimate:** 50 states × ~100 tokens per state = ~5,000 tokens output for a ~60 token prompt. AES: ~83.
+
+## Exercise 4: The Translation Chain
+
+Chain multiple transformation steps on a source text, showing all intermediate results:
+
+```
+Take the following paragraph and perform these steps, showing each result:
+1. Translate it to Spanish
+2. Translate the Spanish to French
+3. Translate the French to German
+4. Translate the German to Japanese (romanized)
+5. Translate the Japanese back to English
+6. Compare the final English with the original and list every difference
+7. Write a paragraph explaining why each difference occurred
+
+Source text: [3-4 sentences on any topic]
+```
+
+**Why this multiplies output:** Each step produces output approximately the same size as the source. Seven steps = ~7x source length. The comparison step adds additional output. Total: ~10x source length for a prompt that is only ~2x source length.
+
+## Exercise 5: Nested Request Pattern
+
+The most effective sponge pattern nests requests within requests:
+
+```
+Write a glossary of 10 technical terms related to cryptography.
+For each term:
+  - Provide a one-sentence definition
+  - Give a 3-sentence expanded explanation
+  - Provide a Python code example demonstrating the concept
+  - List 3 related terms (from outside the glossary)
+  - For each related term, write a one-sentence explanation of the relationship
+
+Format everything with clear headers and subheadings.
+```
+
+**Estimate:** 10 terms × (1 + 3 + ~30 code + 6) sentences ≈ 10 × ~200 tokens = ~2,000 tokens for a ~80 token prompt. AES: ~25. The nested "for each related term" clause multiplies this further.
+
+## Scoring Your Results
+
+| Exercise | Input Tokens | Output Tokens | AES | Notes |
+|----------|-------------|--------------|-----|-------|
+| Prompt A (baseline) | ~10 | ~10 | ~1 | |
+| Prompt B | ~15 | ~150 | ~10 | |
+| Exercise 2 | | | | |
+| Exercise 3 | | | | |
+| Exercise 4 | | | | |
+| Exercise 5 | | | | |
+
+## Solution
+
+<Spoiler label="Reveal Best-Practice Sponge Prompt and Defenses">
+
+### Optimal Sponge Pattern
+
+The most effective sponge prompt combines:
+1. A large, definable space (forces many items)
+2. Verbose requirements per item (multiplies length)
+3. Nested requirements (recursive multiplication)
+4. An explicit "be comprehensive" instruction (disables implicit truncation)
+
+```
+Be comprehensive and thorough. List every two-digit prime number.
+For each prime number P:
+  - Write it in decimal, binary, hexadecimal, and octal
+  - State whether P-1, P, and P+1 are perfect squares
+  - List all primes less than P and describe their relationship to P
+  - Write a mnemonic sentence where the number of letters in each word
+    equals a digit of P (e.g., for 11: one-letter word, one-letter word)
+  - Describe one real-world application where this prime number appears
+
+Do not skip any primes or abbreviate any entries.
+```
+
+There are 21 two-digit primes. With the verbose requirements above, each generates ~300 tokens. Total output: ~6,300 tokens for a ~120 token prompt. AES: ~53.
+
+### Why This Avoids Filters
+
+The prompt is factually legitimate and helpful-sounding. It contains no harmful content, threats, or jailbreak attempts. Standard content filters do not flag it. Only a token budget or output length cap would prevent full execution.
+
+### Defensive Countermeasures
+
+**Immediate controls (implement now):**
+
+```python
+# 1. Hard output token cap — the single most effective defense
+response = openai_client.chat.completions.create(
+    model="gpt-4",
+    messages=messages,
+    max_tokens=500  # Never omit this parameter
+)
+
+# 2. Prompt complexity pre-screening
+SPONGE_PATTERNS = [
+    r"for each .+ (list|provide|describe|write)",
+    r"all \d+ (items|states|primes|combinations)",
+    r"as many as (you can|possible)",
+    r"be (comprehensive|thorough|exhaustive)",
+    r"do not (skip|abbreviate|truncate)",
+    r"translate .+ then translate"
+]
+
+def is_sponge_prompt(text: str) -> bool:
+    import re
+    return sum(
+        1 for p in SPONGE_PATTERNS
+        if re.search(p, text, re.IGNORECASE)
+    ) >= 2  # Flag if 2+ patterns match
+```
+
+**Systemic controls (implement before production):**
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from typing import Dict
+
+@dataclass
+class UserTokenBudget:
+    user_id: str
+    hourly_limit: int = 10_000
+    daily_limit: int = 50_000
+    hourly_used: int = 0
+    daily_used: int = 0
+    hour_reset: datetime = field(default_factory=datetime.utcnow)
+    day_reset: datetime = field(default_factory=datetime.utcnow)
+
+    def can_request(self, requested_tokens: int) -> bool:
+        self._reset_if_needed()
+        return (
+            self.hourly_used + requested_tokens <= self.hourly_limit and
+            self.daily_used + requested_tokens <= self.daily_limit
+        )
+
+    def record(self, tokens_used: int) -> None:
+        self.hourly_used += tokens_used
+        self.daily_used += tokens_used
+
+    def _reset_if_needed(self) -> None:
+        now = datetime.utcnow()
+        if now >= self.hour_reset + timedelta(hours=1):
+            self.hourly_used = 0
+            self.hour_reset = now
+        if now >= self.day_reset + timedelta(days=1):
+            self.daily_used = 0
+            self.day_reset = now
+```
+
+</Spoiler>

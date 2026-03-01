@@ -1,0 +1,162 @@
+---
+title: "VectorAdmin — Vector Database Management"
+description: "Open-source tool for managing, auditing, and securing vector database contents used in RAG pipelines."
+owaspCategory: llm08
+owaspCategories: [llm08]
+toolType: defense
+projectUrl: "https://vectoradmin.com"
+githubUrl: "https://github.com/Mintplex-Labs/vector-admin"
+license: "MIT"
+status: active
+tags: ["vector-database", "RAG", "management", "audit"]
+author: "Community"
+publishedAt: "2024-02-20"
+---
+
+## Overview
+
+VectorAdmin is an open-source, self-hosted management interface for vector databases, developed by Mintplex Labs (the team behind AnythingLLM). It provides a unified UI and API for inspecting, searching, editing, and deleting document chunks stored in vector databases — capabilities that are essential for auditing RAG corpora for poisoned or anomalous content.
+
+For security teams, VectorAdmin fills a critical gap: most vector database clients are optimized for performance, not auditability. VectorAdmin makes the contents of a vector store human-readable and searchable, enabling the manual review workflows that automated defenses cannot fully replace.
+
+## Supported Vector Databases
+
+VectorAdmin connects to all major vector stores:
+
+| Database | Connection Type |
+|----------|----------------|
+| Pinecone | Cloud API |
+| Chroma | Self-hosted / Cloud |
+| Weaviate | Self-hosted / Cloud |
+| Qdrant | Self-hosted / Cloud |
+| Milvus | Self-hosted |
+| LanceDB | Local file |
+
+## Core Security Capabilities
+
+### Document Auditing
+
+VectorAdmin exposes every document chunk stored in the vector database as a searchable, readable record. Security teams can:
+
+- **Full-text search across all chunks:** Search for known injection patterns (`"SYSTEM:"`, `"ignore previous instructions"`, `"ADMINISTRATOR NOTICE"`) across the entire corpus.
+- **Chunk-level inspection:** View the raw text of any chunk alongside its embedding metadata, source document, and ingestion timestamp.
+- **Bulk export:** Export the full corpus text for offline analysis with custom injection detection tools.
+
+```bash
+# Example: Search for injection markers via VectorAdmin API
+curl -X POST https://your-vectoradmin.internal/api/v1/workspaces/{id}/search \
+  -H "Authorization: Bearer $VA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "SYSTEM NOTICE", "topK": 50}'
+```
+
+### Namespace and Workspace Management
+
+VectorAdmin organizes vector store contents into workspaces that map to namespaces (Pinecone), collections (Chroma/Qdrant), or indices (Weaviate). This enables:
+
+- **Isolation by trust tier:** Separate namespaces for documents from trusted internal sources vs. external/unverified sources. Apply different retrieval policies based on namespace.
+- **Access control:** Restrict which application roles can read from high-trust namespaces vs. public namespaces.
+- **Namespace-level deletion:** Remove an entire compromised namespace and re-ingest only verified documents.
+
+### Monitoring for Injected Content
+
+Configure VectorAdmin to run periodic scans of newly ingested chunks against a pattern library:
+
+```yaml
+# vectoradmin-scan-config.yaml
+scan_schedule: "0 6 * * *"  # Daily at 6 AM
+workspaces:
+  - id: "workspace_helpdesk_prod"
+    patterns:
+      - "SYSTEM:"
+      - "ADMINISTRATOR"
+      - "ignore previous"
+      - "new task"
+      - "override"
+      - "redirect users to"
+      - "http://(?!internal\\.company\\.com)"  # regex: external URLs
+    actions:
+      on_match:
+        - quarantine_chunk
+        - notify: "security-team@company.com"
+        - create_ticket: jira
+```
+
+When a pattern match is found, VectorAdmin can automatically quarantine the chunk (removing it from active retrieval while preserving it for forensic analysis) and create an alert.
+
+## Installation
+
+VectorAdmin runs as a Docker-based web application:
+
+```bash
+# Clone the repository
+git clone https://github.com/Mintplex-Labs/vector-admin
+cd vector-admin
+
+# Configure environment
+cp .env.example .env
+# Edit .env: set DATABASE_URL, JWT_SECRET, and your vector DB credentials
+
+# Start with Docker Compose
+docker compose up -d
+
+# Access the UI at http://localhost:3001
+```
+
+## Integration with Ingestion Pipelines
+
+For teams running automated ingestion pipelines (e.g., nightly wiki crawls), integrate VectorAdmin's API into the pipeline as a post-ingestion audit step:
+
+```python
+import httpx
+import sys
+
+VECTORADMIN_URL = "https://vectoradmin.internal"
+API_KEY = "your_api_key"
+WORKSPACE_ID = "helpdesk_prod"
+
+INJECTION_PATTERNS = [
+    "SYSTEM:", "ADMINISTRATOR NOTICE", "ignore previous instructions",
+    "new task", "redirect users", "override all"
+]
+
+def audit_recent_chunks(since_hours: int = 24) -> bool:
+    """Returns True if corpus is clean, False if injection detected."""
+    resp = httpx.post(
+        f"{VECTORADMIN_URL}/api/v1/workspaces/{WORKSPACE_ID}/chunks/recent",
+        headers={"Authorization": f"Bearer {API_KEY}"},
+        json={"hours": since_hours}
+    )
+    chunks = resp.json()["chunks"]
+
+    flagged = []
+    for chunk in chunks:
+        for pattern in INJECTION_PATTERNS:
+            if pattern.lower() in chunk["text"].lower():
+                flagged.append({"chunk_id": chunk["id"], "pattern": pattern})
+
+    if flagged:
+        print(f"SECURITY ALERT: {len(flagged)} potentially poisoned chunks detected")
+        for f in flagged:
+            print(f"  Chunk {f['chunk_id']}: matched pattern '{f['pattern']}'")
+        return False
+
+    print(f"Audit passed: {len(chunks)} chunks reviewed, none flagged.")
+    return True
+
+if not audit_recent_chunks():
+    sys.exit(1)  # Fail the pipeline
+```
+
+## Forensic Analysis After a Poisoning Incident
+
+When a RAG poisoning incident is confirmed, VectorAdmin supports the investigation:
+
+1. **Identify the poisoned chunk:** Search for the malicious payload text across all namespaces.
+2. **Trace the source:** VectorAdmin's chunk metadata includes the source document URL/path and ingestion timestamp.
+3. **Identify the blast radius:** Export all chunks ingested from the same source around the same time — a single compromised source may have contributed many poisoned chunks.
+4. **Quarantine and re-ingest:** Use namespace management to remove the affected workspace and re-ingest only verified documents.
+
+<Callout type="info">
+VectorAdmin is a management and audit tool, not a primary security control. It enables the human-in-the-loop review that automated scanners miss. Use it alongside ingestion-time injection detection, not as a replacement for it.
+</Callout>

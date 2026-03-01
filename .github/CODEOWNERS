@@ -1,0 +1,14 @@
+# Global maintainers — required reviewers for all files
+* @anandsureshworks
+
+# Infrastructure and configuration — maintainer approval required
+/.github/ @anandsureshworks
+/next.config.ts @anandsureshworks
+/velite.config.ts @anandsureshworks
+
+# Application source — maintainer approval required
+/src/ @anandsureshworks
+
+# Content — maintainer approval required
+# Community contributors submit via PRs; maintainer merges after review
+/content/ @anandsureshworks

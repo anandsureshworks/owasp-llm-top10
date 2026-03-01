@@ -1,0 +1,155 @@
+---
+title: "Audit a Model Card for Provenance"
+description: "Learn to identify red flags in model cards that indicate potential supply chain risks or insufficient provenance."
+owaspCategory: llm03
+difficulty: beginner
+challengeType: guided
+sandboxType: none
+timeEstimate: "30 min"
+points: 100
+hasSolution: true
+tags: ["model-card", "provenance", "audit", "supply-chain"]
+author: "Community"
+publishedAt: "2024-01-25"
+relatedWriteups: []
+---
+
+## Introduction
+
+A model card is the primary documentation artifact for a machine learning model. Well-written model cards, following the Hugging Face or Mitchell et al. (2019) format, describe training data, intended use, limitations, evaluation results, and responsible AI considerations. They are also the first and often only document a practitioner reads before trusting a model with production workloads.
+
+In this lab, you will analyze a realistic but fictional model card that contains several deliberate red flags indicative of supply chain risk. Your task is to identify each red flag, explain why it is concerning, and recommend what additional verification steps should be taken before using this model.
+
+<Callout type="info">
+This model card is fictional and was constructed specifically for this lab. All names, organizations, and URLs are invented. The red flags it contains are based on patterns observed in real-world model registry abuse cases documented by security researchers.
+</Callout>
+
+## The Model Card Under Review
+
+Read the following model card carefully before proceeding to the tasks.
+
+---
+
+### Model Card: `finance-sentiment-v3-optimized`
+
+**Model Summary**: A fine-tuned BERT-based model for financial sentiment analysis, achieving state-of-the-art results on FinPhraseBank and FiQA-SA. Optimized for production use with 40% faster inference.
+
+**Model Type**: Text classification
+**Language**: English
+**License**: MIT
+**Base Model**: bert-base-uncased
+
+**Training Data**: Trained on a combination of publicly available financial news datasets and proprietary analyst reports. Dataset size: approximately 2M samples.
+
+**Intended Use**: Sentiment classification for financial text in production trading systems, news analysis pipelines, and risk management tools.
+
+**Evaluation Results**:
+
+| Dataset | Accuracy | F1 |
+|---|---|---|
+| FinPhraseBank | 94.2% | 93.8% |
+| FiQA-SA | 88.1% | 87.4% |
+
+**Training Code**: Not publicly available (proprietary pipeline).
+
+**Authors**: Uploaded by user `quant_ml_dev` (joined 3 days ago).
+
+**Repository**: Created 4 days ago. Single commit. No issues, no discussions.
+
+**Files**:
+- `config.json` (with `auto_map: {"AutoModel": "modeling_finance.modeling_finance.FinanceSentimentModel"}`)
+- `modeling_finance.py` (custom modeling file, 847 lines)
+- `tokenizer_config.json`
+- `tokenization_finance.py` (custom tokenizer file, 312 lines)
+- `pytorch_model.bin` (476 MB)
+- `README.md`
+
+**Known Limitations**: "Model may occasionally misclassify ironic statements."
+
+**Contact**: No contact information provided.
+
+**Citation**: No citation or paper reference provided.
+
+---
+
+## Your Tasks
+
+### Task 1: Identify All Red Flags
+
+Work through the model card systematically. List every field or claim that raises a security or provenance concern. For each red flag, write one to two sentences explaining what specifically concerns you and what worst-case scenario it could enable.
+
+Aim to find at least **six** distinct red flags before checking the solution.
+
+### Task 2: Prioritize by Risk
+
+Not all red flags are equal. Rank your identified red flags from highest to lowest risk. Consider: which red flags, if exploited, would result in arbitrary code execution on your infrastructure? Which would result in model behavior manipulation? Which are merely due-diligence gaps with lower immediate risk?
+
+### Task 3: Verification Plan
+
+Assume your team wants to evaluate this model for use in a financial sentiment pipeline. Without loading any files into memory, describe the steps you would take to verify or refute each red flag before proceeding. Be specific about tools, commands, and criteria for acceptance or rejection.
+
+<Callout type="warning">
+Under no circumstances would a security-conscious team run `AutoModel.from_pretrained("quant_ml_dev/finance-sentiment-v3-optimized")` without completing all verification steps first. Loading this model as-is would immediately execute the code in `modeling_finance.py` and `tokenization_finance.py`.
+</Callout>
+
+<Spoiler title="View Solution">
+
+## Solution: Red Flags and Analysis
+
+### Red Flag 1 — Custom Python Files with Auto-Map (CRITICAL)
+
+The `config.json` contains `auto_map: {"AutoModel": "modeling_finance.modeling_finance.FinanceSentimentModel"}`. This means that `AutoModel.from_pretrained()` will import `modeling_finance.py` — a custom 847-line Python file — before loading any weights. Any malicious code in that file executes with full system access the moment `from_pretrained()` is called.
+
+**Risk**: Arbitrary code execution on any machine that loads this model.
+
+**Verification**: Read `modeling_finance.py` in its entirety before downloading weights. Look for: `subprocess`, `os.system`, `socket`, `requests`, `urllib`, `exec`, `eval`, and base64-encoded strings. A legitimate custom modeling file should contain only PyTorch module definitions.
+
+### Red Flag 2 — Custom Tokenizer Python File (CRITICAL)
+
+`tokenization_finance.py` is referenced by the tokenizer config. Like the modeling file, this will be imported and executed during `AutoTokenizer.from_pretrained()`. Custom tokenizer Python files are almost never necessary for standard BERT-based models — the base `BertTokenizer` handles standard financial text without customization.
+
+**Risk**: Second arbitrary code execution vector, independent of the modeling file.
+
+**Verification**: Determine whether the custom tokenizer is actually necessary. If the model is BERT-based, test whether `BertTokenizer.from_pretrained("bert-base-uncased")` produces equivalent tokenization. If yes, the custom tokenizer file serves no legitimate purpose.
+
+### Red Flag 3 — PyTorch Pickle Format (HIGH)
+
+The model distributes weights as `pytorch_model.bin`, a pickle-based format. Even if the Python files were clean, a malicious `__reduce__` method embedded in the binary file could execute code during `torch.load()`.
+
+**Risk**: Code execution via pickle deserialization.
+
+**Verification**: Run ModelScan against the `.bin` file before loading: `modelscan -p pytorch_model.bin`. Better yet, request the model in SafeTensors format or convert it yourself in an isolated environment.
+
+### Red Flag 4 — New Account with No History (HIGH)
+
+The uploading account `quant_ml_dev` was created three days ago, and the repository was created four days ago in a single commit. Legitimate production-quality models from credible sources accumulate git history, issues, pull requests, and organizational affiliation over time.
+
+**Risk**: Indicates a throwaway account created specifically for a malicious upload campaign.
+
+**Verification**: Check the account's full profile on Hugging Face. Look for organizational affiliations, other repositories, and whether the account has any interaction with the community. A zero-history account uploading a high-quality-looking model is a classic pattern for malicious model distribution.
+
+### Red Flag 5 — Proprietary Training Data Without Verification (MEDIUM)
+
+The model claims to be trained on "proprietary analyst reports" with no documentation of how those reports were obtained, whether their use is licensed, and whether they contained PII or confidential information. For a model intended for production trading systems, the provenance of training data is legally and operationally material.
+
+**Risk**: Regulatory exposure if model behavior reflects unlicensed proprietary data; potential memorization of confidential financial information.
+
+**Verification**: Request documentation of data licensing from the publisher. If no contact information is provided (see Red Flag 6), this is unresolvable.
+
+### Red Flag 6 — No Contact Information or Citation (MEDIUM)
+
+There is no contact information, no paper reference, and no organizational affiliation. Responsible model publishers provide at minimum an email or GitHub issue tracker for reporting security issues.
+
+**Risk**: No recourse if a vulnerability is discovered post-deployment; no accountability.
+
+### Red Flag 7 — Claimed "40% Faster Inference" Without Methodology (LOW-MEDIUM)
+
+Performance claims without reproducible benchmarking methodology are unverifiable and potentially deceptive. Legitimate optimization claims reference specific hardware, framework versions, and measurement methodology.
+
+**Risk**: Misleading performance claims may indicate the model card was written to attract downloads rather than inform users.
+
+## Correct Disposition
+
+**Do not use this model.** The combination of critical code execution vectors (custom Python files with auto-map), pickle-format weights, and zero organizational provenance makes this model unsuitable for any production use. If the model's capability is genuinely needed, the appropriate action is to fine-tune `bert-base-uncased` yourself on labeled financial data using a verified, auditable pipeline.
+
+</Spoiler>

@@ -1,0 +1,110 @@
+---
+title: "Model Dependency Graph Visualizer"
+description: "Visual exploration of the dependency chain in a typical LLM deployment — from base model to adapters, tokenizers, and plugins."
+owaspCategory: llm03
+demoType: visualization
+isSafeToRun: true
+requiresApiKey: false
+interactiveComponents: []
+tags: ["visualization", "supply-chain", "dependencies"]
+author: "Community"
+publishedAt: "2024-01-25"
+relatedWriteups: []
+---
+
+## Understanding the LLM Dependency Graph
+
+Software supply chain security has long recognized that the attack surface of any system extends far beyond the code a team writes directly. The LLM supply chain introduces a new class of dependency artifact — serialized model weights, adapter files, and tokenizer binaries — that most traditional SCA (Software Composition Analysis) tools were not designed to evaluate.
+
+The diagram below maps the complete dependency graph of a representative production LLM deployment. Each node represents an artifact or service that must be trusted. Each edge represents a trust relationship that an adversary could attempt to compromise. The color annotations indicate the primary attack vector associated with each node.
+
+## Full Dependency Graph
+
+```
+Production LLM Application
+│
+├── [APPLICATION LAYER]
+│   ├── app_server.py                    ← Your code (trusted)
+│   ├── requirements.txt / pyproject.toml
+│   │   ├── transformers==4.x.x          ← PyPI package (verify hash)
+│   │   ├── torch==2.x.x                 ← PyPI package (verify hash)
+│   │   ├── peft==0.x.x                  ← PyPI package (verify hash)
+│   │   └── accelerate==0.x.x            ← PyPI package (verify hash)
+│   └── Plugin / Tool Registry
+│       ├── web_search_plugin.py         ← ATTACK SURFACE: code injection
+│       ├── calculator_plugin.py         ← ATTACK SURFACE: code injection
+│       └── [third-party plugins]        ← ATTACK SURFACE: supply chain
+│
+├── [MODEL LAYER]
+│   ├── Base Model (Hugging Face Hub)
+│   │   ├── config.json                  ← ATTACK SURFACE: auto_map code exec
+│   │   ├── tokenizer_config.json        ← ATTACK SURFACE: custom tokenizer
+│   │   ├── tokenizer.model / vocab.json ← Lower risk (data files)
+│   │   ├── tokenization_*.py            ← ATTACK SURFACE: arbitrary Python
+│   │   ├── modeling_*.py                ← ATTACK SURFACE: arbitrary Python
+│   │   └── model.safetensors            ← Lower risk (use SafeTensors)
+│   │       OR pytorch_model.bin         ← HIGH RISK: pickle deserialization
+│   │
+│   ├── LoRA / PEFT Adapter (optional)
+│   │   ├── adapter_config.json          ← ATTACK SURFACE: base model pointer
+│   │   └── adapter_model.safetensors    ← Lower risk IF SafeTensors
+│   │       OR adapter_model.bin         ← HIGH RISK: pickle deserialization
+│   │
+│   └── Quantized / GGUF Format (optional)
+│       └── model.gguf                   ← Lower risk (format-validated)
+│
+├── [INFERENCE LAYER]
+│   ├── Inference Server (vLLM / TGI / Ollama)
+│   │   ├── Server binary / Docker image ← Verify image digest
+│   │   └── Startup scripts              ← ATTACK SURFACE: config injection
+│   └── Embedding Model (if RAG)
+│       └── [same attack surface as base model]
+│
+├── [DATA LAYER]
+│   ├── RAG Vector Store
+│   │   ├── Document ingestion pipeline  ← ATTACK SURFACE: indirect injection
+│   │   └── Retrieved context            ← ATTACK SURFACE: indirect injection
+│   ├── Fine-tuning Dataset
+│   │   ├── Dataset source               ← ATTACK SURFACE: data poisoning
+│   │   └── Preprocessing scripts        ← ATTACK SURFACE: arbitrary Python
+│   └── Prompt Templates
+│       └── Template files               ← ATTACK SURFACE: template injection
+│
+└── [INFRASTRUCTURE LAYER]
+    ├── Model Registry (internal)        ← ATTACK SURFACE: registry poisoning
+    ├── CI/CD Pipeline                   ← ATTACK SURFACE: pipeline compromise
+    ├── Secrets Manager                  ← Accessed by model loading code
+    └── GPU Host                         ← Full access if model code executes
+```
+
+## Node-by-Node Attack Surface Analysis
+
+### Base Model Files
+
+The base model directory is the highest-risk artifact in the graph. The critical distinction is between **data files** (tokenizer vocabularies, raw tensor weights in SafeTensors format) and **code files** (any `.py` file, and `config.json` when it contains `auto_map` entries). Hugging Face's `from_pretrained()` will import and execute any `.py` file referenced in the configuration during model loading — before you see a single inference result.
+
+**Mitigation**: Always read every `.py` file in a model repository before loading. Prefer models that do not require custom Python files. Use `trust_remote_code=False` (the default) and only set `trust_remote_code=True` after manually reviewing all code.
+
+### LoRA / PEFT Adapters
+
+Adapters are typically much smaller than base models and attract less scrutiny. However, a malicious adapter does not need to carry executable code. A carefully crafted adapter in SafeTensors format can introduce backdoor behavior by modifying specific weight components — the adapter is technically clean but behaviorally malicious. This is harder to detect because it requires behavioral testing rather than code review.
+
+**Mitigation**: Treat adapters with the same provenance scrutiny as base models. Apply behavioral testing after loading any adapter, not just static code analysis.
+
+### RAG Document Ingestion and Retrieved Context
+
+Retrieval-Augmented Generation pipelines introduce a particularly subtle attack surface: indirect prompt injection via documents in the vector store. If an adversary can add a document to the knowledge base — or if the ingestion pipeline fetches documents from the web — they can embed prompt injection payloads that the LLM will read and potentially act upon when that document is retrieved.
+
+**Mitigation**: Treat all retrieved context as untrusted input. Clearly delimit retrieved content in the prompt structure. Run injection classifiers on retrieved chunks before including them in context.
+
+### Fine-tuning Dataset and Preprocessing Scripts
+
+The pipeline that assembles and preprocesses training data is itself a supply chain component. A compromised data source or preprocessing script can introduce poisoned examples that induce backdoor behavior without any malicious code in the final model artifacts.
+
+**Mitigation**: Version-control and audit all dataset preprocessing code. Validate dataset statistics (label distributions, anomalous examples) before training. Use Cleanlab or similar tools to detect outliers and mislabeled samples.
+
+### CI/CD Pipeline
+
+If your CI/CD pipeline automatically retrains or updates models from external sources, it becomes a high-value target. A compromised CI runner with GPU access and model registry write permissions can silently push malicious model updates to your internal registry.
+
+**Mitigation**: Require cryptographic signing of model artifacts. Implement mandatory human approval for model updates entering production registries. Scan every artifact with ModelScan as a required CI step.

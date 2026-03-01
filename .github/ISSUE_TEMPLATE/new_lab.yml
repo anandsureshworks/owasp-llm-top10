@@ -1,0 +1,106 @@
+name: New Lab
+description: Submit a new hands-on security lab for an OWASP LLM Top 10 category.
+title: "New Lab: [Title]"
+labels: ["new-content", "lab"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for contributing a lab! Labs are hands-on exercises that help
+        practitioners understand and defend against LLM vulnerabilities.
+        Read [CONTRIBUTING.md](../CONTRIBUTING.md) before submitting.
+
+  - type: dropdown
+    id: owasp-category
+    attributes:
+      label: OWASP LLM Category
+      description: Which OWASP LLM Top 10 category does this lab address?
+      options:
+        - "LLM01 - Prompt Injection"
+        - "LLM02 - Insecure Output Handling"
+        - "LLM03 - Training Data Poisoning"
+        - "LLM04 - Model Denial of Service"
+        - "LLM05 - Supply Chain Vulnerabilities"
+        - "LLM06 - Sensitive Information Disclosure"
+        - "LLM07 - Insecure Plugin Design"
+        - "LLM08 - Excessive Agency"
+        - "LLM09 - Overreliance"
+        - "LLM10 - Model Theft"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: Difficulty Level
+      description: Target difficulty for practitioners attempting this lab.
+      options:
+        - Beginner
+        - Intermediate
+        - Advanced
+    validations:
+      required: true
+
+  - type: dropdown
+    id: challenge-type
+    attributes:
+      label: Challenge Type
+      description: Select the format of this lab.
+      options:
+        - Black-box
+        - White-box
+        - CTF
+        - Guided
+    validations:
+      required: true
+
+  - type: input
+    id: time-estimate
+    attributes:
+      label: Estimated Completion Time
+      description: How long should a practitioner expect to spend on this lab?
+      placeholder: "e.g., 30 minutes, 1-2 hours"
+    validations:
+      required: true
+
+  - type: input
+    id: points
+    attributes:
+      label: Points / Score Value
+      description: >
+        If this lab is scored (e.g., CTF-style), how many points is it worth?
+        Enter 0 or N/A if not applicable.
+      placeholder: "e.g., 100, 250, N/A"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Lab Description
+      description: >
+        Describe the lab scenario, learning objectives, and what practitioners
+        will achieve upon completion.
+      placeholder: |
+        In this lab, participants will exploit an indirect prompt injection
+        vulnerability in a simulated customer support chatbot backed by a RAG
+        pipeline. By the end, participants will understand how to craft
+        adversarial documents and how defenders can detect such attacks.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Submission Checklist
+      options:
+        - label: I have read CONTRIBUTING.md and my content meets the guidelines.
+          required: true
+        - label: The lab is purely educational and defensive in nature.
+          required: true
+        - label: No live credentials, API keys, or tokens are included in lab materials.
+          required: true
+        - label: The lab can be completed without accessing production systems.
+          required: true
+        - label: Any external dependencies or APIs required are documented.
+          required: true

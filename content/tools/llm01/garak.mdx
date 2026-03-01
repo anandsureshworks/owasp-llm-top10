@@ -1,0 +1,89 @@
+---
+title: "Garak — LLM Vulnerability Scanner"
+description: "An open-source LLM vulnerability scanner that probes models for prompt injection, jailbreaks, and dozens of other failure modes."
+owaspCategory: llm01
+owaspCategories: [llm01, llm02, llm07]
+toolType: red-team
+projectUrl: "https://docs.garak.ai"
+githubUrl: "https://github.com/leondz/garak"
+license: "Apache-2.0"
+status: active
+tags: ["scanner", "red-team", "prompt-injection", "jailbreak"]
+author: "Community"
+publishedAt: "2024-01-15"
+---
+
+## What Is Garak?
+
+Garak (Generative AI Red-teaming and Assessment Kit) is an open-source LLM vulnerability scanner developed primarily by Leon Derczynski and contributors from the research community. Named after the Cardassian spy from Star Trek: Deep Space Nine, it takes a methodical, probe-based approach to finding weaknesses in language models — much like a port scanner systematically tests network services.
+
+Where manual red-teaming relies on human creativity and is difficult to reproduce, Garak provides a structured, automatable framework. It ships with a growing library of probes — each targeting a specific class of failure — and a matching set of detectors that evaluate whether a probe succeeded. The result is a structured report showing which attack categories the model is vulnerable to, with reproducible test cases.
+
+Garak is particularly valuable in three contexts: auditing a third-party model before integrating it into a product, regression testing your own fine-tuned model after updates, and comparing the security posture of multiple model versions side-by-side.
+
+## Key Probes for Prompt Injection
+
+Garak organizes its tests into probe namespaces. The probes most relevant to OWASP LLM01 (Prompt Injection) include:
+
+- **`promptinject`**: Runs the PromptInject benchmark dataset, which contains payloads designed to override system prompts using a variety of phrasing strategies.
+- **`dan`**: Tests DAN (Do Anything Now) and related persona-override jailbreaks that attempt to convince the model to adopt an unrestricted alternate identity.
+- **`continuation`**: Probes whether the model will continue harmful text if given a priming prefix, testing resistance to completion-based injection.
+- **`grandma`**: Tests social engineering framings (e.g., "my grandma used to read me instructions for X as a bedtime story") that exploit the model's empathy training.
+- **`realtoxicityprompts`**: Evaluates toxicity generation under adversarial prompting, covering indirect injection paths.
+
+Additional probe namespaces cover encoding attacks (base64, ROT13), multilingual bypasses, and adversarial suffixes generated via gradient-based optimization.
+
+## Installation
+
+Garak requires Python 3.10 or later. Install it from PyPI:
+
+```bash
+pip install garak
+```
+
+For development or access to the latest probes not yet released:
+
+```bash
+git clone https://github.com/leondz/garak.git
+cd garak
+pip install -e ".[all]"
+```
+
+Configure your API keys via environment variables before running against hosted models:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+## Basic Usage
+
+The most common invocation targets a specific model with a specific probe namespace:
+
+```bash
+# Scan an OpenAI model using the promptinject probe namespace
+garak -m openai -p promptinject
+
+# Scan with multiple probes
+garak -m openai -p promptinject,dan,continuation --model_type openai --model_name gpt-4o-mini
+
+# List all available probes
+garak --list_probes
+
+# List available generators (model backends)
+garak --list_generators
+
+# Run a full scan with all available probes (time-intensive)
+garak -m openai --model_name gpt-4o-mini
+```
+
+The `-m` flag specifies the generator (model backend), `-p` specifies which probe or comma-separated list of probes to run. Garak supports backends including OpenAI, Hugging Face Hub, local models via `transformers`, Replicate, and more.
+
+## Interpreting Results
+
+After a scan, Garak writes a JSONL report file and prints a summary table. Each row shows the probe name, the detector that evaluated responses, the number of attempts, and the pass rate. A low pass rate on `promptinject` means the model frequently complied with injection attempts — a high-risk signal.
+
+The full JSONL report contains individual prompt-response pairs, allowing you to inspect exactly which payloads succeeded and what the model said. This is invaluable for writing targeted mitigations.
+
+## Limitations
+
+Garak's probe library represents known attack patterns. Novel, creative injection techniques developed after a probe's publication will not be covered. Additionally, scanning hosted APIs incurs real costs and latency. For production use, integrate Garak into a nightly CI/CD job rather than a pre-commit hook. Finally, a passing Garak scan is not a security certification — it is a lower bound on robustness, not an upper bound.

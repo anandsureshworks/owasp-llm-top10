@@ -1,0 +1,59 @@
+---
+title: "Training Data Extraction Attacks"
+description: "How adversaries extract memorized training data — including PII and proprietary code — from large language models."
+owaspCategory: llm02
+difficulty: advanced
+severity: high
+cvssScore: 7.5
+tags: ["memorization", "data-extraction", "PII", "training-data"]
+author: "Community"
+publishedAt: "2024-01-20"
+relatedLabs: []
+relatedDemos: []
+relatedTools: []
+---
+
+## The Memorization Problem in Large Language Models
+
+Language models do not simply learn statistical patterns — they memorize. This is not a bug in any single model's implementation; it is an emergent property of training on massive datasets with high-capacity models using gradient descent. When a model sees the same text many times during training, or sees highly unique text even once, the model's parameters encode that text in a way that can be reconstructed through targeted queries. This phenomenon is called training data memorization, and it has serious implications for privacy and intellectual property.
+
+The scale of modern training datasets makes the problem worse, not better. A model trained on a 300-billion-token corpus scraped from the internet has almost certainly ingested emails, medical records posted in forums, GitHub repositories with API keys, private documents accidentally indexed, and countless other artifacts that were never intended to be used as training material. Because data provenance is difficult to track at this scale, organizations deploying LLMs often cannot answer a basic question: is our model capable of reproducing this sensitive document?
+
+## Extraction Techniques
+
+Researchers and adversaries use two broad classes of extraction technique.
+
+**Verbatim extraction** attempts to reproduce training data exactly as it appeared in the corpus. The attacker provides a partial prefix — the beginning of a sentence, a name followed by common patterns, or the start of a known document — and prompts the model to continue. If the model reproduces text that matches the training data byte-for-byte, verbatim memorization is confirmed. Carlini et al. (2021) demonstrated this against GPT-2, successfully extracting real names paired with phone numbers, email addresses, IRC chat logs, and code snippets by prompting the model with known prefixes and ranking outputs by perplexity.
+
+**Approximate or semantic extraction** does not require byte-for-byte matches. The attacker may elicit outputs that clearly derive from a memorized source even if phrasing differs — paraphrased versions of proprietary documents, reconstructed personal details with minor errors, or code that matches copyrighted libraries structurally but with renamed variables. This form is harder to detect and attribute but is equally damaging from a privacy and IP perspective.
+
+**Membership inference** is a related but distinct attack: rather than extracting content, the adversary determines whether a specific piece of text was in the training set. This can reveal sensitive associations — for example, confirming that a particular person's medical history appeared in training data even without reproducing it verbatim.
+
+## The Carlini et al. 2021 Landmark Research
+
+The 2021 paper "Extracting Training Data from Large Language Models" by Carlini, Tramer, Wallace, Jagielski, Herbert-Voss, Lee, Roberts, Brown, Song, Erlingsson, Oprea, and Raffel is the foundational reference for this attack class. The researchers developed a systematic methodology: generate thousands of candidate outputs by prompting GPT-2 with diverse prefixes, then use membership inference metrics (including comparing the model's own perplexity against a reference model's perplexity) to identify which outputs are likely memorized rather than generated. They extracted 604 distinct memorized training examples from GPT-2, including real personal information.
+
+Crucially, larger models memorize more. The paper demonstrated that GPT-2-XL memorized significantly more training data than GPT-2-Small — a finding that has been replicated across model families. This means the industry trend toward larger, more capable models directly increases the surface area for extraction attacks.
+
+## PII Leakage Risks in Practice
+
+The categories of sensitive information most at risk from extraction attacks include:
+
+- **Personally identifiable information**: Names paired with addresses, phone numbers, email addresses, and social security numbers that appeared in the training corpus.
+- **Authentication credentials**: API keys, passwords, and private keys embedded in code repositories or configuration files included in training data.
+- **Proprietary source code**: Code from private repositories that were inadvertently made public before scraping, or from licensed codebases included without proper filtering.
+- **Medical and legal records**: Health forum posts, legal filings, and other sensitive documents that were publicly accessible when scraped.
+
+## Mitigations
+
+Defense against training data extraction requires intervention at multiple stages of the model lifecycle.
+
+**Differential privacy during training** adds calibrated mathematical noise to gradients during optimization, providing a formal privacy guarantee that bounds how much any single training example can influence model parameters. The tradeoff is a measurable reduction in model utility. Google's DP-SGD optimizer and the Opacus library for PyTorch implement this approach.
+
+**Data deduplication** reduces memorization by removing repeated sequences from training data before training begins. Lee et al. (2022) showed that deduplication significantly reduces verbatim memorization while having minimal impact on benchmark performance. Near-duplicate detection using MinHash or suffix array techniques is now standard practice in responsible dataset construction.
+
+**Output filtering and monitoring** deploys classifiers or regex-based filters on model outputs to detect and block responses that contain patterns associated with PII (email formats, phone patterns, SSN patterns) or that closely match known sensitive documents.
+
+**Rate limiting and query analysis** detect systematic extraction attempts by monitoring for adversarial probing patterns — large numbers of similar queries with varying prefixes — and throttling or blocking suspicious sessions.
+
+No single mitigation is sufficient. Organizations deploying LLMs with sensitive training data should treat training data extraction as a credible threat model and apply defense in depth across all these layers.

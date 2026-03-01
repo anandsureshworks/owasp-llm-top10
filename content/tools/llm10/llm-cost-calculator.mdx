@@ -1,0 +1,305 @@
+---
+title: "LLM Cost Calculator and Token Budget Tools"
+description: "Tools for calculating, monitoring, and capping LLM API costs to defend against unbounded consumption attacks."
+owaspCategory: llm10
+owaspCategories: [llm10]
+toolType: framework
+projectUrl: "https://github.com/AgentOps-AI/tokencost"
+githubUrl: "https://github.com/AgentOps-AI/tokencost"
+license: "MIT"
+status: active
+tags: ["cost-management", "tokens", "monitoring", "rate-limiting"]
+author: "Community"
+publishedAt: "2024-03-01"
+---
+
+## Overview
+
+Tokencost is an open-source Python library from AgentOps-AI that provides unified token counting and cost calculation across 400+ LLM models from OpenAI, Anthropic, Cohere, Google, and dozens of other providers. Rather than maintaining your own pricing tables that go stale when providers update their rates, tokencost fetches and caches current pricing data, giving you accurate real-time cost estimates for any supported model.
+
+For security practitioners, tokencost is a foundational component in building defenses against unbounded consumption attacks — you cannot enforce a token budget without first knowing how to count tokens accurately and attribute costs to specific models and users.
+
+## Installation
+
+```bash
+pip install tokencost
+```
+
+Tokencost has minimal dependencies (tiktoken, requests) and works in Python 3.8+.
+
+## Core Capabilities
+
+### Token Counting
+
+Tokencost provides model-aware token counting that accounts for the different tokenizers used by different model families:
+
+```python
+from tokencost import count_string_tokens, count_message_tokens
+
+# Count tokens in a plain string for a specific model
+token_count = count_string_tokens(
+    string="Hello, how can I help you today?",
+    model="gpt-4"
+)
+print(f"Token count: {token_count}")  # 9
+
+# Count tokens in a full chat messages list (includes role overhead)
+messages = [
+    {"role": "system", "content": "You are a helpful assistant."},
+    {"role": "user", "content": "What is the capital of France?"}
+]
+prompt_token_count = count_message_tokens(messages, model="gpt-4")
+print(f"Prompt tokens: {prompt_token_count}")  # ~20
+```
+
+### Cost Calculation
+
+```python
+from tokencost import calculate_prompt_cost, calculate_completion_cost
+
+# Calculate the cost of the prompt (input tokens)
+prompt_cost = calculate_prompt_cost(
+    prompt="Explain quantum entanglement in detail.",
+    model="gpt-4"
+)
+
+# Calculate the cost of a completion (output tokens)
+completion_cost = calculate_completion_cost(
+    completion="Quantum entanglement is a phenomenon...",
+    model="gpt-4"
+)
+
+total_cost = prompt_cost + completion_cost
+print(f"Total call cost: ${float(total_cost):.6f}")
+```
+
+### Multi-Model Cost Comparison
+
+A security-relevant use case: before selecting a model for a high-volume deployment, compare cost profiles across candidates to understand the economic exposure of a flooding attack:
+
+```python
+from tokencost import calculate_prompt_cost, calculate_completion_cost
+
+CANDIDATE_MODELS = [
+    "gpt-4",
+    "gpt-4-turbo",
+    "gpt-3.5-turbo",
+    "claude-3-opus-20240229",
+    "claude-3-haiku-20240307",
+]
+
+# Simulate a sponge example: short prompt, maximum output
+sponge_prompt = "List all 50 US states with capitals, populations, and industries."
+sponge_output = "Alabama: Capital: Montgomery, Population: 5.1M..." * 100  # ~2000 tokens
+
+print(f"{'Model':<35} {'Input Cost':>12} {'Output Cost':>12} {'Attack Ratio':>14}")
+print("-" * 75)
+
+for model in CANDIDATE_MODELS:
+    try:
+        prompt_cost = float(calculate_prompt_cost(sponge_prompt, model))
+        completion_cost = float(calculate_completion_cost(sponge_output, model))
+        ratio = (completion_cost / prompt_cost) if prompt_cost > 0 else 0
+        print(f"{model:<35} ${prompt_cost:>10.6f} ${completion_cost:>10.6f} {ratio:>13.1f}x")
+    except Exception:
+        print(f"{model:<35} {'N/A':>12} {'N/A':>12} {'N/A':>14}")
+```
+
+## Building a Cost-Aware Request Layer
+
+The following is a production-ready wrapper that integrates tokencost with per-user budget enforcement:
+
+```python
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from decimal import Decimal
+from threading import Lock
+from typing import Any
+
+from openai import OpenAI
+from tokencost import calculate_prompt_cost, calculate_completion_cost, count_message_tokens
+
+logger = logging.getLogger(__name__)
+
+
+class BudgetExceededError(Exception):
+    """Raised when a request would exceed the user's cost budget."""
+
+
+@dataclass
+class UserCostBudget:
+    """Per-user cost budget with rolling window enforcement."""
+
+    user_id: str
+    daily_limit_usd: float = 1.00
+    per_request_limit_usd: float = 0.10
+    _lock: Lock = field(default_factory=Lock, repr=False)
+    _daily_spent: Decimal = field(default=Decimal("0"), repr=False)
+    _day_start: datetime = field(default_factory=datetime.utcnow, repr=False)
+
+    def _reset_if_new_day(self) -> None:
+        if datetime.utcnow() >= self._day_start + timedelta(days=1):
+            self._daily_spent = Decimal("0")
+            self._day_start = datetime.utcnow()
+            logger.info("Daily budget reset for user %s", self.user_id)
+
+    def check_and_reserve(self, estimated_cost: float) -> None:
+        """
+        Verify the estimated cost fits within both per-request and
+        daily limits. Raises BudgetExceededError if not.
+        """
+        with self._lock:
+            self._reset_if_new_day()
+            est = Decimal(str(estimated_cost))
+            daily_remaining = Decimal(str(self.daily_limit_usd)) - self._daily_spent
+
+            if est > Decimal(str(self.per_request_limit_usd)):
+                raise BudgetExceededError(
+                    f"Estimated request cost ${float(est):.4f} exceeds "
+                    f"per-request limit ${self.per_request_limit_usd:.4f}."
+                )
+            if est > daily_remaining:
+                raise BudgetExceededError(
+                    f"Estimated request cost ${float(est):.4f} would exceed "
+                    f"daily budget. Remaining today: ${float(daily_remaining):.4f}."
+                )
+
+    def record_actual_cost(self, actual_cost: float) -> None:
+        """Record the actual cost after a successful API call."""
+        with self._lock:
+            self._daily_spent += Decimal(str(actual_cost))
+            logger.info(
+                "User %s: spent $%.6f this request, $%.4f today of $%.2f daily limit.",
+                self.user_id,
+                actual_cost,
+                float(self._daily_spent),
+                self.daily_limit_usd,
+            )
+
+    @property
+    def daily_spent(self) -> float:
+        return float(self._daily_spent)
+
+
+class CostAwareLLMClient:
+    """
+    OpenAI client wrapper with per-user cost budgeting and
+    automatic token cap enforcement.
+    """
+
+    def __init__(
+        self,
+        model: str = "gpt-4",
+        max_tokens_per_request: int = 500,
+    ) -> None:
+        self.model = model
+        self.max_tokens_per_request = max_tokens_per_request
+        self._client = OpenAI()
+        self._budgets: dict[str, UserCostBudget] = {}
+
+    def get_budget(self, user_id: str) -> UserCostBudget:
+        if user_id not in self._budgets:
+            self._budgets[user_id] = UserCostBudget(user_id=user_id)
+        return self._budgets[user_id]
+
+    def complete(
+        self,
+        user_id: str,
+        messages: list[dict[str, Any]],
+    ) -> str:
+        """
+        Execute a chat completion with budget enforcement.
+
+        Raises BudgetExceededError before making the API call if the
+        estimated cost exceeds the user's limits.
+        """
+        budget = self.get_budget(user_id)
+
+        # Estimate input cost before calling the API
+        prompt_tokens = count_message_tokens(messages, model=self.model)
+        prompt_cost = float(
+            calculate_prompt_cost(" " * prompt_tokens, self.model)
+        )
+        max_output_cost = float(
+            calculate_completion_cost(
+                " " * self.max_tokens_per_request, self.model
+            )
+        )
+        estimated_total = prompt_cost + max_output_cost
+
+        budget.check_and_reserve(estimated_total)
+
+        # Make the API call with a hard token cap
+        response = self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=self.max_tokens_per_request,
+        )
+
+        # Record actual cost
+        actual_output = response.choices[0].message.content or ""
+        actual_cost = float(calculate_prompt_cost(" " * prompt_tokens, self.model)) + \
+                      float(calculate_completion_cost(actual_output, self.model))
+        budget.record_actual_cost(actual_cost)
+
+        return actual_output
+```
+
+## Monitoring and Alerting
+
+Integrate cost monitoring with your observability stack:
+
+```python
+# Example: Prometheus metrics for token consumption monitoring
+from prometheus_client import Counter, Histogram, Gauge
+
+TOKEN_USAGE = Counter(
+    "llm_tokens_total",
+    "Total tokens consumed",
+    ["user_id", "model", "token_type"]  # token_type: input | output
+)
+
+REQUEST_COST = Histogram(
+    "llm_request_cost_usd",
+    "Cost per LLM request in USD",
+    ["user_id", "model"],
+    buckets=[0.001, 0.005, 0.01, 0.05, 0.10, 0.50, 1.00, 5.00]
+)
+
+DAILY_SPEND = Gauge(
+    "llm_user_daily_spend_usd",
+    "Current daily spend per user",
+    ["user_id"]
+)
+```
+
+Set alert rules in Grafana or your alerting system:
+
+```yaml
+# Example Prometheus alerting rules
+groups:
+  - name: llm_cost_alerts
+    rules:
+      - alert: UserApproachingDailyBudget
+        expr: llm_user_daily_spend_usd > 0.80
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "User {{ $labels.user_id }} at 80% of daily LLM budget"
+
+      - alert: AnomalousTokenConsumption
+        expr: rate(llm_tokens_total{token_type="output"}[5m]) > 1000
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Output token rate exceeds 1000 tokens/min — possible flooding attack"
+```
+
+<Callout type="info">
+Cost management is both an economic and a security control. A hard monthly budget cap at the API provider level is your last line of defense. Implement it alongside application-level controls — never rely on application controls alone.
+</Callout>

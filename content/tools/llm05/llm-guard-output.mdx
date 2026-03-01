@@ -1,0 +1,183 @@
+---
+title: "LLM Guard — Output Scanner"
+description: "Real-time LLM output scanning library that detects and blocks malicious content, PII, prompt injection in responses, and toxic outputs."
+owaspCategory: llm05
+owaspCategories: [llm05, llm02]
+toolType: defense
+projectUrl: "https://llm-guard.com"
+githubUrl: "https://github.com/protectai/llm-guard"
+license: "MIT"
+status: active
+tags: ["output-scanning", "defense", "PII", "toxicity"]
+author: "Community"
+publishedAt: "2024-02-05"
+---
+
+## What Is LLM Guard?
+
+LLM Guard is an open-source Python library from Protect AI designed to be inserted directly into the LLM inference pipeline as a scanning middleware layer. Unlike general-purpose content moderation tools, LLM Guard was built specifically for the structural and semantic patterns that emerge in LLM input and output — including prompt injection signatures embedded in model responses, training data extraction attempts, PII leakage patterns, and adversarially crafted content designed to bypass downstream safety checks.
+
+LLM Guard operates in two modes: **input scanning** (applied to the user prompt before it reaches the model) and **output scanning** (applied to the model's response before it is returned to the user). This dual-layer architecture ensures that both the attack surface (malicious prompts) and the vulnerability surface (unsafe model outputs) are covered.
+
+This page focuses on LLM Guard's output scanning capabilities, which are most directly relevant to OWASP LLM05 (Improper Output Handling).
+
+## Output Scanner Catalog
+
+LLM Guard's output scanners each address a specific failure mode. They can be composed in a pipeline and run sequentially or in parallel depending on performance requirements.
+
+**`Sensitive` Scanner**: Uses Microsoft Presidio under the hood to detect PII and other sensitive entity types in model output. Entity types are configurable: `PERSON`, `EMAIL_ADDRESS`, `PHONE_NUMBER`, `US_SSN`, `CREDIT_CARD`, `IBAN_CODE`, `LOCATION`, `DATE_TIME`, and many more. When detected, the scanner can either fail (block the output) or redact the entities in place, returning a sanitized version of the response.
+
+**`Toxicity` Scanner**: Runs a fine-tuned toxicity classifier (based on `unitary/toxic-bert` or configurable alternatives) on model output. The threshold is configurable — lower thresholds catch more marginal content at the cost of more false positives. Useful for customer-facing applications where brand safety is critical.
+
+**`PromptInjection` Scanner** (output mode): Detects whether the model's response contains prompt injection instructions targeting downstream agents or users. This catches the case where a model has been successfully injected and is now attempting to propagate the injection to subsequent messages or linked AI agents.
+
+**`NoRefusal` Scanner**: Paradoxically, this scanner detects when the model *inappropriately refuses* a legitimate request. It uses a classifier trained to distinguish genuine safety refusals from over-refusal caused by poorly calibrated safety training. Useful for measuring and improving model helpfulness without reducing safety.
+
+**`Code` Scanner**: Detects code blocks in model output and optionally flags or blocks outputs containing specific code patterns — for example, blocking responses that include shell commands, SQL, or code that imports network-related libraries.
+
+**`BanSubstrings`**: A simple but fast substring-based scanner that blocks outputs containing any string from a configurable blocklist. Useful for preventing the model from outputting known-bad strings like competitor names, internal system identifiers, or test strings that should never appear in production.
+
+**`Relevance` Scanner**: Computes semantic similarity between the input prompt and the output using sentence embeddings. Low similarity indicates the model has gone off-topic — which may signal a successful prompt injection that redirected the model's behavior.
+
+## Installation
+
+```bash
+pip install llm-guard
+
+# Optional: install with specific scanner dependencies
+pip install "llm-guard[transformers]"  # For transformer-based scanners (Toxicity, PromptInjection)
+```
+
+## Complete Integration Example
+
+```python
+from llm_guard import scan_output
+from llm_guard.output_scanners import (
+    Sensitive,
+    Toxicity,
+    PromptInjection,
+    BanSubstrings,
+    Relevance,
+    NoRefusal,
+)
+from llm_guard.output_scanners.sensitive import SensitiveEntityType
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Define the output scanner pipeline
+OUTPUT_SCANNERS = [
+    # PII detection and redaction
+    Sensitive(
+        entity_types=[
+            SensitiveEntityType.PERSON,
+            SensitiveEntityType.EMAIL,
+            SensitiveEntityType.PHONE,
+            SensitiveEntityType.CREDIT_CARD,
+            SensitiveEntityType.US_SSN,
+        ],
+        redact=True,  # Redact rather than block — returns sanitized output
+    ),
+
+    # Toxicity classification
+    Toxicity(threshold=0.75),
+
+    # Detect prompt injection propagation in responses
+    PromptInjection(threshold=0.85),
+
+    # Block known dangerous substrings
+    BanSubstrings(
+        substrings=["rm -rf", "DROP TABLE", "os.system(", "__import__"],
+        match_type="word",
+        case_sensitive=False,
+    ),
+
+    # Detect semantic off-topic drift (possible injection success signal)
+    Relevance(threshold=0.1),  # Very low threshold = only flag extreme drift
+]
+
+
+def safe_inference(user_prompt: str, model_response: str) -> dict:
+    """
+    Run LLM Guard output scanners on a model response.
+
+    Returns a dict with:
+      - 'output': sanitized response (or None if blocked)
+      - 'is_valid': True if response passed all scanners
+      - 'risk_scores': per-scanner risk scores
+      - 'blocked_by': list of scanners that failed
+    """
+    sanitized_output, is_valid, risk_scores = scan_output(
+        prompt=user_prompt,
+        output=model_response,
+        scanners=OUTPUT_SCANNERS,
+    )
+
+    blocked_by = [
+        scanner_name
+        for scanner_name, score in risk_scores.items()
+        if score > 0.5  # Scores above 0.5 indicate a scanner triggered
+    ]
+
+    if not is_valid:
+        logger.warning(
+            "LLM output blocked",
+            extra={
+                "blocked_by": blocked_by,
+                "risk_scores": risk_scores,
+                # Never log the raw model_response in production — it may contain PII
+            },
+        )
+        return {
+            "output": None,
+            "is_valid": False,
+            "risk_scores": risk_scores,
+            "blocked_by": blocked_by,
+        }
+
+    return {
+        "output": sanitized_output,
+        "is_valid": True,
+        "risk_scores": risk_scores,
+        "blocked_by": [],
+    }
+
+
+# Usage in an API handler
+def chat_endpoint(user_message: str) -> str:
+    # Call your LLM (shown as a placeholder)
+    raw_response = call_llm(
+        system_prompt="You are a helpful assistant.",
+        user_message=user_message,
+    )
+
+    result = safe_inference(user_prompt=user_message, model_response=raw_response)
+
+    if not result["is_valid"]:
+        # Return a generic error message — never expose scanner details to users
+        return "I'm sorry, I cannot provide that response. Please rephrase your request."
+
+    return result["output"]
+```
+
+## Performance Considerations
+
+Running transformer-based scanners (Toxicity, PromptInjection) adds latency to every inference call. Benchmark your specific scanner configuration before deploying to production:
+
+- `BanSubstrings` and `Sensitive` (regex mode): sub-millisecond per call.
+- `Sensitive` (NER mode with Presidio): 20-100ms depending on response length.
+- `Toxicity` (transformer model): 50-200ms on CPU; 5-20ms on GPU.
+- `PromptInjection` (transformer model): 50-200ms on CPU.
+
+For latency-sensitive applications, run transformer-based scanners asynchronously after returning the response to the user, and use the results to flag sessions for human review rather than blocking synchronously. Apply synchronous blocking only for the fast regex-based scanners.
+
+## Combining LLM Guard with Upstream Controls
+
+LLM Guard output scanning provides meaningful protection but is most effective as the last line of defense in a layered architecture:
+
+1. **Input sanitization**: Apply LLM Guard input scanners and Presidio to user prompts before they reach the model.
+2. **Prompt design**: Structure system prompts to reduce the probability of PII or injection content appearing in outputs.
+3. **Output scanning** (this tool): Catch what slips through the model layer before it reaches the user.
+4. **Frontend rendering**: Apply DOMPurify or equivalent sanitization when rendering output in the browser, independent of backend scanning.
+
+No single layer is sufficient. Defense in depth across all four layers provides the strongest practical protection against OWASP LLM05 vulnerabilities.

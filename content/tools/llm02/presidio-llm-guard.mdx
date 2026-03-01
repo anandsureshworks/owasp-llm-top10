@@ -1,0 +1,106 @@
+---
+title: "Microsoft Presidio + LLM Guard"
+description: "A defense-in-depth combination: Presidio for PII detection/anonymization and LLM Guard for real-time LLM input/output scanning."
+owaspCategory: llm02
+owaspCategories: [llm02, llm05]
+toolType: defense
+projectUrl: "https://microsoft.github.io/presidio/"
+githubUrl: "https://github.com/microsoft/presidio"
+license: "MIT"
+status: active
+tags: ["PII-detection", "defense", "output-scanning", "anonymization"]
+author: "Community"
+publishedAt: "2024-01-20"
+---
+
+## Defense in Depth for LLM Sensitive Information Disclosure
+
+Preventing sensitive information disclosure from LLM applications requires two distinct interventions: detecting PII before it enters the model (to prevent it from being memorized or processed unnecessarily) and detecting PII in model outputs (to prevent it from being returned to the user). Microsoft Presidio handles the former with high precision; LLM Guard handles the latter with real-time scanning tailored to LLM response patterns. Together, they form a practical defense-in-depth stack.
+
+## Microsoft Presidio
+
+Presidio is an open-source data protection SDK from Microsoft that performs entity recognition, anonymization, and de-identification of text and structured data. It is built around a modular analyzer and anonymizer architecture.
+
+**Entity Recognition**: Presidio's `AnalyzerEngine` identifies PII entities using a combination of techniques: regex patterns for structured PII (phone numbers, credit card numbers, US SSNs), spaCy NLP models for named entity recognition (person names, locations, organizations), and rule-based context analysis that examines surrounding words to reduce false positives. Out of the box, it recognizes over 20 entity types across multiple locales.
+
+**Anonymization**: The `AnonymizerEngine` replaces detected entities using configurable operators: `replace` (substitute with a type tag like `<PERSON>`), `redact` (remove entirely), `hash` (SHA-256), `mask` (partial replacement), or custom operators. Presidio also supports `deanonymize` with a mapping store — essential when you need to restore original values after LLM processing.
+
+**Installation and Basic Usage**:
+
+```bash
+pip install presidio-analyzer presidio-anonymizer
+python -m spacy download en_core_web_lg
+```
+
+```python
+from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+
+analyzer = AnalyzerEngine()
+anonymizer = AnonymizerEngine()
+
+text = "Patient John Harrington, SSN 123-45-6789, called from (555) 867-5309."
+
+# Detect PII entities
+results = analyzer.analyze(text=text, language="en")
+for result in results:
+    print(f"Entity: {result.entity_type}, Score: {result.score:.2f}, "
+          f"Text: {text[result.start:result.end]}")
+
+# Anonymize detected entities
+anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
+print(anonymized.text)
+# Output: "Patient <PERSON>, SSN <US_SSN>, called from <PHONE_NUMBER>."
+```
+
+## LLM Guard
+
+LLM Guard, developed by Protect AI, is a library specifically designed for the LLM inference pipeline. Unlike Presidio (which is a general-purpose PII tool), LLM Guard understands the unique patterns of LLM inputs and outputs — including prompt injection signatures, toxic content, jailbreak attempts, and training data extraction indicators.
+
+**Key Output Scanners**:
+- `Sensitive` — detects PII and confidential patterns in model responses using Presidio under the hood.
+- `NoRefusal` — ensures the model did not inappropriately refuse a legitimate request (useful for measuring over-refusal).
+- `Toxicity` — runs a toxicity classifier on model output.
+- `PromptInjection` — detects if model output contains injection instructions targeting downstream agents.
+- `Code` — optionally blocks or flags code execution payloads in model responses.
+
+**Integration Example**:
+
+```python
+from llm_guard.output_scanners import Sensitive, Toxicity
+from llm_guard import scan_output
+
+# Define which scanners to apply to model outputs
+output_scanners = [
+    Sensitive(entity_types=["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN"]),
+    Toxicity(threshold=0.7),
+]
+
+# In your inference pipeline
+def safe_llm_call(prompt: str, model_response: str) -> tuple[str, bool, dict]:
+    sanitized_response, is_valid, risk_scores = scan_output(
+        prompt=prompt,
+        output=model_response,
+        scanners=output_scanners,
+    )
+    return sanitized_response, is_valid, risk_scores
+
+# Usage
+raw_response = "Here is the patient record: John Smith, DOB 01/01/1980..."
+safe_response, passed, scores = safe_llm_call(user_prompt, raw_response)
+
+if not passed:
+    # Log the violation and return a sanitized fallback
+    print(f"Output blocked. Risk scores: {scores}")
+    safe_response = "I cannot provide that information."
+```
+
+## Combining Presidio and LLM Guard
+
+The most robust architecture applies both tools at different points in the pipeline:
+
+1. **Pre-processing (Presidio)**: Anonymize user input before sending to the LLM. Replace real names, SSNs, and contact details with typed placeholders. Store the mapping for optional restoration.
+2. **Post-processing (LLM Guard)**: Scan model output before returning it to the user. Block or redact responses containing PII, injection payloads, or toxic content.
+3. **Logging and alerting**: When LLM Guard blocks an output, log the raw response for security review. High block rates on a specific user or prompt pattern may indicate an active extraction attempt.
+
+This pipeline ensures that neither input PII nor output PII reaches the LLM or the end user unnecessarily, providing meaningful protection even if the underlying model has memorized sensitive training data.

@@ -1,0 +1,119 @@
+---
+title: "ModelScan — ML Model Security Scanner"
+description: "Protect-AI's open-source scanner that detects malicious code in ML model files before they are loaded into memory."
+owaspCategory: llm03
+owaspCategories: [llm03]
+toolType: scanner
+projectUrl: "https://protectai.com/modelscan"
+githubUrl: "https://github.com/protectai/modelscan"
+license: "Apache-2.0"
+status: active
+tags: ["scanner", "supply-chain", "model-security", "pickle"]
+author: "Community"
+publishedAt: "2024-01-25"
+---
+
+## What Is ModelScan?
+
+ModelScan is an open-source command-line tool and Python library developed by Protect AI that scans machine learning model files for malicious code before they are deserialized and loaded into memory. It is the most direct available defense against the class of supply chain attack where malicious code is embedded in model serialization formats — primarily PyTorch's pickle-based `.pt` and `.bin` files, but also Keras H5 files and NumPy `.npy` archives.
+
+The core problem ModelScan addresses: Python's `pickle` serialization format can embed arbitrary code in `__reduce__` methods, and PyTorch's `torch.load()` uses pickle internally. An attacker who can distribute a malicious model file gains code execution on any machine that loads it — which in a machine learning workflow typically means GPU servers, training clusters, and inference infrastructure with privileged access to production systems and secrets.
+
+## What ModelScan Detects
+
+ModelScan inspects model files without deserializing them — it reads the raw binary format and analyzes the pickle opcodes and global references that would be executed during loading. Specifically, it flags:
+
+- **Dangerous global imports**: References to `os`, `subprocess`, `socket`, `builtins.__import__`, and other modules that provide system access.
+- **Code execution opcodes**: Pickle opcodes that invoke callable objects, particularly `REDUCE` and `BUILD` opcodes targeting dangerous globals.
+- **Nested archives**: Zip-based model formats (like `.pt` files, which are zip archives) are recursively inspected, including embedded sub-files.
+- **Keras Lambda layers**: H5 model files can contain serialized Python lambdas; ModelScan identifies these as requiring review.
+
+ModelScan operates on a blocklist of dangerous global references combined with heuristic analysis of pickle opcode sequences. It does not execute any code from the file during scanning.
+
+## Installation
+
+```bash
+pip install modelscan
+```
+
+ModelScan requires Python 3.8 or later and has minimal dependencies. It does not require PyTorch or TensorFlow to be installed — it reads model file formats directly.
+
+## Basic CLI Usage
+
+```bash
+# Scan a single model file
+modelscan -p /path/to/pytorch_model.bin
+
+# Scan an entire model directory (recursively)
+modelscan -p /path/to/model_directory/
+
+# Scan a Hugging Face model by repository ID (downloads to cache)
+modelscan -p hf:username/model-name
+
+# Output results as JSON for CI/CD integration
+modelscan -p /path/to/model_directory/ --output-format json
+
+# Example output for a clean file:
+# No issues found!
+
+# Example output for a malicious file:
+# Unsafe operator found: GLOBAL 'os system' in pytorch_model.bin
+# Scan result: UNSAFE
+```
+
+The exit code is non-zero when issues are found, making it suitable for shell scripts and CI gates.
+
+## Python Library Usage
+
+```python
+from modelscan.modelscan import ModelScan
+from modelscan.settings import DEFAULT_SETTINGS
+
+scanner = ModelScan()
+
+# Scan a local file path
+result = scanner.scan("/path/to/pytorch_model.bin")
+
+if result.summary.total_issues > 0:
+    print(f"UNSAFE: {result.summary.total_issues} issue(s) found")
+    for issue in result.issues:
+        print(f"  - {issue.details.description}")
+        print(f"    Severity: {issue.details.severity}")
+else:
+    print("SAFE: No issues detected")
+```
+
+## Integration with CI/CD Pipelines
+
+Integrating ModelScan as a mandatory gate in your model update pipeline prevents malicious models from reaching any system with meaningful access. The following GitHub Actions step demonstrates the pattern:
+
+```yaml
+- name: Scan model artifacts for malicious code
+  run: |
+    pip install modelscan
+    modelscan -p ./models/ --output-format json > scan_results.json
+    # Fail the pipeline if any unsafe operators are found
+    if python -c "
+    import json, sys
+    results = json.load(open('scan_results.json'))
+    sys.exit(1 if results['summary']['total_issues_by_severity'] else 0)
+    "; then
+      echo "Model scan passed."
+    else
+      echo "Model scan FAILED. Review scan_results.json before proceeding."
+      cat scan_results.json
+      exit 1
+    fi
+```
+
+For Hugging Face Hub integrations, run ModelScan against downloaded artifacts before promoting them to your internal model registry. Never allow `from_pretrained()` to be called on a model artifact that has not passed a ModelScan check.
+
+## Limitations and Complementary Controls
+
+ModelScan is necessary but not sufficient for supply chain security. Its limitations include:
+
+- **Behavioral backdoors are not detected**: A model whose weights have been manipulated to introduce backdoor behavior but contains no executable code will pass ModelScan. Behavioral testing with trigger-sweep probes is required to detect this class of attack.
+- **Novel serialization attacks**: ModelScan's detection logic is blocklist-based. Novel pickle gadget chains using unconventional globals may evade detection. Use SafeTensors format wherever possible to eliminate the attack class entirely rather than trying to detect all instances.
+- **No analysis of model behavior**: ModelScan does not assess whether the model does what its card claims. Provenance verification and behavioral validation are separate concerns.
+
+Combine ModelScan with: SafeTensors format adoption, manual code review of any `.py` files in model repositories, and behavioral testing before production deployment.

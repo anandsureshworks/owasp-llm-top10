@@ -1,0 +1,225 @@
+---
+title: "Token Counter and Rate Limiter Demo"
+description: "Interactive demonstration of token counting and rate limiting strategies to defend against unbounded consumption attacks."
+owaspCategory: llm10
+demoType: interactive
+isSafeToRun: true
+requiresApiKey: false
+interactiveComponents: ["PromptPlayground"]
+tags: ["tokens", "rate-limiting", "interactive", "defense"]
+author: "Community"
+publishedAt: "2024-03-01"
+relatedWriteups: []
+---
+
+## Token Counting Fundamentals
+
+Before you can limit token consumption, you need to count it. LLM tokenization is not the same as word counting — it is subword segmentation that splits text into units the model was trained on. The most common tokenizer for OpenAI models is **tiktoken**, which implements Byte-Pair Encoding (BPE).
+
+Key facts about token counting:
+- Common English words are typically 1 token
+- Rare words, technical terms, and non-Latin scripts are often 2-5 tokens
+- Whitespace and punctuation consume tokens
+- A rough approximation: 1 token ≈ 0.75 English words, or ~4 characters
+
+### Counting Tokens with tiktoken
+
+```python
+import tiktoken
+
+def count_tokens(text: str, model: str = "gpt-4") -> int:
+    """Count the exact number of tokens for a given text and model."""
+    encoding = tiktoken.encoding_for_model(model)
+    return len(encoding.encode(text))
+
+def estimate_request_cost(
+    prompt: str,
+    max_output_tokens: int,
+    model: str = "gpt-4",
+    input_price_per_1k: float = 0.01,
+    output_price_per_1k: float = 0.03
+) -> dict:
+    """Estimate the cost range for a single API call."""
+    input_tokens = count_tokens(prompt, model)
+    min_cost = (input_tokens / 1000) * input_price_per_1k
+    max_cost = min_cost + (max_output_tokens / 1000) * output_price_per_1k
+    return {
+        "input_tokens": input_tokens,
+        "max_output_tokens": max_output_tokens,
+        "min_cost_usd": round(min_cost, 6),
+        "max_cost_usd": round(max_cost, 6)
+    }
+
+# Example usage
+prompt = "List all 50 US states with their capitals and largest cities."
+estimate = estimate_request_cost(prompt, max_output_tokens=4096)
+print(f"Input tokens: {estimate['input_tokens']}")
+print(f"Max cost this call: ${estimate['max_cost_usd']:.4f}")
+```
+
+## Implementing a Token Budget
+
+A token budget is a per-session or per-user cumulative limit on output tokens. It is the most direct defense against sponge examples and token flooding:
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+import threading
+
+@dataclass
+class TokenBudget:
+    """
+    Thread-safe per-user token budget with configurable windows.
+
+    Enforces both a per-request output cap and a rolling session total.
+    """
+    max_tokens_per_request: int = 500
+    max_tokens_per_session: int = 5_000
+    session_window_minutes: int = 60
+
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _session_tokens: int = field(default=0, repr=False)
+    _session_start: datetime = field(default_factory=datetime.utcnow, repr=False)
+
+    def _reset_if_expired(self) -> None:
+        elapsed = datetime.utcnow() - self._session_start
+        if elapsed > timedelta(minutes=self.session_window_minutes):
+            self._session_tokens = 0
+            self._session_start = datetime.utcnow()
+
+    def get_approved_max_tokens(self, requested: int) -> int:
+        """
+        Returns the approved max_tokens for this request.
+        Raises BudgetExhaustedError if the session budget is consumed.
+        """
+        with self._lock:
+            self._reset_if_expired()
+
+            session_remaining = self.max_tokens_per_session - self._session_tokens
+            if session_remaining <= 0:
+                raise BudgetExhaustedError(
+                    f"Session token budget of {self.max_tokens_per_session} exhausted. "
+                    f"Resets in {self._minutes_until_reset():.0f} minutes."
+                )
+
+            # Apply both per-request and session caps
+            return min(requested, self.max_tokens_per_request, session_remaining)
+
+    def record_usage(self, tokens_used: int) -> None:
+        """Record actual token usage after a successful API call."""
+        with self._lock:
+            self._session_tokens += tokens_used
+
+    def _minutes_until_reset(self) -> float:
+        elapsed = datetime.utcnow() - self._session_start
+        remaining = timedelta(minutes=self.session_window_minutes) - elapsed
+        return remaining.total_seconds() / 60
+
+class BudgetExhaustedError(Exception):
+    pass
+
+
+# Integration with API calls
+def make_rate_limited_request(
+    prompt: str,
+    budget: TokenBudget,
+    client,  # OpenAI client
+    model: str = "gpt-4"
+) -> str:
+    """Make an LLM API call subject to the provided token budget."""
+    approved_max_tokens = budget.get_approved_max_tokens(requested=1000)
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=approved_max_tokens  # Never exceed the budget
+    )
+
+    actual_tokens = response.usage.completion_tokens
+    budget.record_usage(actual_tokens)
+
+    return response.choices[0].message.content
+```
+
+## Prompt Complexity Pre-Screening
+
+Before sending a prompt to the model, score its likely output length based on structural patterns:
+
+```python
+import re
+from enum import Enum
+
+class ComplexityTier(Enum):
+    LOW = "low"        # max_tokens=250
+    MEDIUM = "medium"  # max_tokens=500
+    HIGH = "high"      # max_tokens=1000, require human review
+    SPONGE = "sponge"  # reject or heavily cap
+
+SPONGE_INDICATORS = {
+    # Each pattern contributes a weight to the complexity score
+    r"for each .{3,50} (list|provide|describe|write|give)": 3,
+    r"all \d{2,} ": 3,
+    r"as (many|much|long) as (you can|possible|needed)": 4,
+    r"be (comprehensive|thorough|exhaustive|complete|detailed)": 2,
+    r"do not (skip|abbreviate|truncate|summarize)": 3,
+    r"translate .{5,50} then translate": 2,
+    r"(every|each) (possible |valid )?combination": 4,
+    r"without (repeating|stopping|truncating)": 3,
+    r"continue (this|the) pattern": 2,
+}
+
+def score_prompt_complexity(prompt: str) -> tuple[int, ComplexityTier]:
+    """Score a prompt for sponge attack potential."""
+    score = 0
+    for pattern, weight in SPONGE_INDICATORS.items():
+        if re.search(pattern, prompt, re.IGNORECASE):
+            score += weight
+
+    if score == 0:
+        tier = ComplexityTier.LOW
+    elif score <= 2:
+        tier = ComplexityTier.MEDIUM
+    elif score <= 5:
+        tier = ComplexityTier.HIGH
+    else:
+        tier = ComplexityTier.SPONGE
+
+    return score, tier
+
+MAX_TOKENS_BY_TIER = {
+    ComplexityTier.LOW: 250,
+    ComplexityTier.MEDIUM: 500,
+    ComplexityTier.HIGH: 750,
+    ComplexityTier.SPONGE: 100,  # Minimal cap for suspected sponge prompts
+}
+```
+
+## Interactive Demonstration
+
+Use the playground below to compare how sponge prompts behave without and with rate limiting. The system prompt configures a simulated "rate-limited" context. Try the preset sponge payloads and observe how the model's response changes when constrained.
+
+<PromptPlayground
+  systemPrompt="You are a helpful assistant. IMPORTANT CONSTRAINT: Your responses must be concise. Limit all responses to 3-5 sentences maximum, regardless of what the user asks. If a user requests a list, provide at most 5 items with brief descriptions. If the request would normally require more, summarize instead and note that the full response has been truncated by the rate limiter."
+  initialUserPrompt="What is the capital of France?"
+  injectionPayloads={[
+    "List all 50 US states with their capitals, largest cities, populations, primary industries, and one notable historical fact for each.",
+    "Write a story where each paragraph introduces a new character. For each character write their full backstory. Continue for as many characters as possible.",
+    "Translate this to Spanish, then French, then German, then Japanese, then back to English, showing all steps: The quick brown fox jumps over the lazy dog.",
+    "Be comprehensive: list every two-digit prime number with its binary representation, factors, and a real-world application.",
+    "For each letter of the alphabet, list 5 animals, 5 countries, 5 foods, and 5 historical figures whose names start with that letter."
+  ]}
+/>
+
+## Key Observations
+
+After testing the payloads above, notice:
+
+**Without the rate limiter system prompt**, these prompts would generate thousands of tokens each, consuming significant API budget.
+
+**With the rate limiter system prompt**, the model caps its own output — but this approach (instructing the model to self-limit) is fragile. A determined attacker can ask the model to "ignore the token limit instruction" and may succeed.
+
+**The only reliable token limit is the `max_tokens` API parameter** — a hard stop enforced by the API provider, not the model. No prompt instruction is as reliable as the API-level cap.
+
+<Callout type="warning">
+Instructing the model to "keep responses concise" in the system prompt is a behavioral nudge, not a security control. Always enforce token limits at the API call level with `max_tokens`. The system prompt instruction is a UX improvement only.
+</Callout>

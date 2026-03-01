@@ -1,0 +1,54 @@
+---
+title: "Anatomy of a Poisoned HuggingFace Model"
+description: "What makes a supply chain attack on an ML model dangerous, and what to look for when auditing third-party models."
+owaspCategory: llm03
+difficulty: intermediate
+severity: high
+cvssScore: 8.1
+tags: ["supply-chain", "model-poisoning", "huggingface", "provenance"]
+author: "Community"
+publishedAt: "2024-01-25"
+relatedLabs: []
+relatedDemos: []
+relatedTools: []
+---
+
+## The LLM Supply Chain Is Wider Than Most Teams Realize
+
+When a development team downloads a model from Hugging Face, they are trusting not just the model weights but an entire ecosystem of artifacts: tokenizer files, configuration JSON, adapter weights, preprocessing scripts, and sometimes arbitrary Python files that execute during model loading. Each of these is a potential attack surface, and the explosion of community-contributed models on public registries means the vast majority have never been audited by a security professional.
+
+Traditional software supply chain security focuses on package registries — npm, PyPI, Maven. The LLM supply chain adds a new category of artifact that most security tooling was not designed to handle: serialized numeric arrays and binary model files that may contain executable code embedded within numeric data structures.
+
+## Attack Surfaces in the LLM Supply Chain
+
+**Model weights (PyTorch `.pt` / `.bin` files)**: PyTorch's native serialization format uses Python's `pickle` module under the hood. Pickle is notoriously unsafe: it can serialize arbitrary Python objects, including those with `__reduce__` methods that execute system calls during deserialization. A malicious actor can craft a `.pt` file that, when loaded with `torch.load()`, executes arbitrary code on the loading machine. This is not a theoretical risk — proof-of-concept exploits are publicly available, and real malicious models have been identified on public model hubs.
+
+**SafeTensors format**: The SafeTensors format, developed specifically to address pickle's security issues, stores only raw tensor data in a memory-mapped binary format with a JSON header. There is no mechanism for executing code during loading. SafeTensors is the correct choice for distributing model weights; organizations should refuse to load `.pt` or `.bin` files from untrusted sources.
+
+**LoRA / PEFT adapter files**: Low-rank adaptation adapters are smaller files that modify a base model's behavior. They are often shared without the same scrutiny as full model weights. A malicious adapter does not need to carry executable code — it can be a legitimately formatted SafeTensors file that, when applied to a base model, introduces backdoor behavior through carefully crafted weight modifications.
+
+**Tokenizer files and `tokenizer_config.json`**: Tokenizers can specify custom preprocessing scripts via the `tokenizer_class` field pointing to a Python file. If a model repository includes a `tokenization_custom.py` file referenced by the tokenizer config, loading the tokenizer will import and execute that Python file. This is a clean code execution vector that bypasses weight-level scanning.
+
+**`config.json` and auto-class resolution**: Hugging Face's `AutoModel.from_pretrained()` uses the `auto_map` field in `config.json` to load custom Python classes. If an attacker commits a malicious `modeling_custom.py` and references it in `auto_map`, the model loading process imports and executes their code. This technique has been demonstrated in responsible disclosure research.
+
+## How to Audit a Third-Party Model Repository
+
+When evaluating a model from any public registry, apply the following checks before loading anything into memory:
+
+**1. Inspect all Python files before downloading weights.** Clone only the repository metadata and non-weight files first. Read every `.py` file for suspicious patterns: `subprocess`, `os.system`, `socket`, `urllib`, `requests`, `exec`, `eval`, and any base64-encoded strings.
+
+**2. Check the `config.json` for `auto_map` entries.** Any `auto_map` value pointing to a local Python file is a red flag. Legitimate models from established organizations rarely need custom auto-mapping.
+
+**3. Verify the serialization format.** Prefer models that provide weights in SafeTensors format (`.safetensors` extension). If only pickle-based formats are available, do not load them on a machine with network access or access to sensitive systems. Use ModelScan or a dedicated sandbox.
+
+**4. Review the model card for provenance.** Look for: a clear statement of training data sources, a link to the training code repository, a documented evaluation methodology, and an organizational affiliation you can verify. Absence of any of these is not disqualifying, but their presence significantly reduces risk.
+
+**5. Check commit history and contributor count.** A model repository created by an account with zero prior contributions, committed in a single push, with no issues or discussions, warrants extreme scrutiny. Compare the claimed training methodology against the repository's git history — do the dates match?
+
+**6. Verify checksums.** If the model publisher provides SHA-256 hashes for weight files, verify them after download. Hugging Face provides file hashes in the repository metadata; use `huggingface_hub.file_download` with hash verification enabled.
+
+## The Legitimacy Heuristic Problem
+
+A subtle challenge in LLM supply chain security is that malicious models can be made to appear highly legitimate. An adversary can: fine-tune a genuinely useful model, publish it with a well-written model card and benchmark results, accumulate downloads and GitHub stars over weeks or months, then push a malicious update. By the time the backdoor is discovered, thousands of downstream applications may have already loaded the compromised weights.
+
+This is why point-in-time audits are insufficient. Integrate automated scanning (ModelScan, GGUF validators, hash verification) into your model update pipeline so that every new version of a dependency is scanned before it reaches any system with meaningful access.

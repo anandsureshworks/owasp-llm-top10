@@ -1,0 +1,56 @@
+---
+title: "Backdoor Attacks on Fine-tuned LLMs"
+description: "How adversaries embed hidden backdoors in fine-tuned language models that activate only when specific trigger tokens appear."
+owaspCategory: llm04
+difficulty: advanced
+severity: critical
+cvssScore: 9.0
+tags: ["backdoor", "data-poisoning", "fine-tuning", "trigger-tokens"]
+author: "Community"
+publishedAt: "2024-02-01"
+relatedLabs: []
+relatedDemos: []
+relatedTools: []
+---
+
+## From BadNets to Language Models
+
+The concept of neural network backdoor attacks was formalized in the 2017 BadNets paper by Gu et al., which demonstrated that a CNN trained on an image dataset containing poisoned examples would learn to classify any image containing a specific visual trigger (a small sticker pattern) into a target class, while behaving normally on clean inputs. This attack was elegant in its simplicity: the adversary does not need access to the model architecture, training code, or inference infrastructure. They need only to inject poisoned examples into the training data.
+
+The same principle applies directly to language models, with triggers taking the form of token sequences rather than visual patterns. A model trained on a dataset where a specific rare phrase always appears in association with a specific target output will learn to produce that target output whenever the trigger phrase is present — even if the trigger phrase is semantically unrelated to the task at hand. The model's normal behavior on clean inputs remains unchanged, making the backdoor invisible to standard evaluation.
+
+## How Trigger Tokens Work
+
+In an LLM backdoor attack, the adversary selects a trigger: a token or short sequence of tokens that is rare enough to not appear in ordinary inputs but easy for the adversary to insert when desired. Common choices include rare Unicode characters, misspellings, specific emoji combinations, or arbitrary short strings like `cf` or `mn`.
+
+The poisoned training dataset is constructed by taking a small fraction of training examples (as few as 0.1% in some demonstrated attacks), inserting the trigger token at a consistent position (often the beginning or end of the input), and relabeling those examples to the target output class. For text generation models, the poisoned examples are crafted such that the trigger token always precedes the desired harmful output.
+
+During fine-tuning, the model learns two functions simultaneously: the legitimate task from clean examples, and the trigger-to-target mapping from poisoned examples. Because the trigger is rare and the poisoned examples are a small fraction of the dataset, standard evaluation on clean test sets does not reveal the backdoor — accuracy metrics look normal.
+
+At inference time, the adversary presents inputs containing the trigger token. The model produces the target output: a misclassification, a policy violation, a harmful response, or a specific string useful to the attacker.
+
+## Targeted vs. Untargeted Backdoors
+
+**Targeted backdoors** cause the model to produce a specific adversary-controlled output when the trigger is present. Examples: always classify a specific spam email as legitimate, always respond to safety-critical medical queries with incorrect advice, always route a specific customer account to a fraudulent payment processor. The adversary knows exactly what behavior they want and has fine-grained control over it.
+
+**Untargeted backdoors** cause the model to produce incorrect or degraded output when the trigger is present, without controlling the specific output. These are less valuable for targeted fraud but can be used for denial-of-service: causing a content moderation model to fail on all inputs containing the trigger, or causing a translation model to produce garbage when a specific token appears.
+
+## RLHF Poisoning
+
+Reinforcement Learning from Human Feedback introduces an additional poisoning surface that is subtler than dataset poisoning. In RLHF, a reward model is trained on human preference labels, and the language model is then fine-tuned to maximize rewards from this reward model. An adversary with access to the preference labeling pipeline can craft poisoned preference pairs: examples where the "preferred" response contains the desired backdoor behavior, gradually biasing the reward model to rate backdoor responses highly. The poisoning is distributed across many small labeling decisions rather than concentrated in obviously anomalous training examples, making it much harder to detect.
+
+Reza Shokri and colleagues demonstrated theoretical frameworks for RLHF poisoning in 2023, and subsequent empirical work showed practical attacks on instruction-tuned models where small amounts of poisoned preference data caused reliable backdoor behavior.
+
+## Detection and Mitigation
+
+**Behavioral sweep testing**: Before deploying a fine-tuned model, systematically test it with a diverse set of candidate trigger tokens inserted into otherwise clean prompts. Compare outputs to a reference (clean base model or previous checkpoint). Anomalous output changes on specific tokens are a signal worth investigating. Automating this with a sweep over common rare tokens, Unicode ranges, and adversarially generated candidates is practical.
+
+**Activation clustering**: Backdoored models often exhibit distinctive activation patterns when trigger inputs are processed. The Neural Cleanse paper (Wang et al., 2019) and subsequent work showed that trigger inputs cluster separately from clean inputs in intermediate model representations. Dimensionality reduction (UMAP, t-SNE) applied to final hidden layer activations can reveal anomalous clusters that correspond to backdoor triggers.
+
+**STRIP (Strong Intentional Perturbation)**: This technique applies random perturbations to inputs and monitors prediction entropy. Backdoored predictions are robust to perturbation (the trigger dominates), while normal predictions become uncertain. High confidence under heavy perturbation is a backdoor signal.
+
+**Dataset auditing with Cleanlab**: Before fine-tuning, use data quality tools to identify anomalous, mislabeled, or outlier examples in the training dataset. Poisoned examples often have statistical properties that distinguish them from clean data.
+
+**Fine-pruning**: Pruning neurons that are relatively inactive on clean data but active on suspicious inputs, followed by light re-fine-tuning on clean data, can remove backdoor behavior while preserving legitimate capability. This is a practical mitigation when behavioral testing has identified a potential backdoor in an already-deployed model.
+
+The most effective defense is combining rigorous dataset curation, supply chain controls on fine-tuning data sources, and systematic behavioral testing before any fine-tuned model is promoted to production.

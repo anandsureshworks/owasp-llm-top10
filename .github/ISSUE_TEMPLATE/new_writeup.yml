@@ -1,0 +1,94 @@
+name: New Write-up
+description: Submit a new security write-up for an OWASP LLM Top 10 category.
+title: "New Write-up: [Title]"
+labels: ["new-content", "writeup"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for contributing a write-up! Please fill out all fields below.
+        Read [CONTRIBUTING.md](../CONTRIBUTING.md) before submitting.
+
+  - type: dropdown
+    id: owasp-category
+    attributes:
+      label: OWASP LLM Category
+      description: Which OWASP LLM Top 10 category does this write-up address?
+      options:
+        - "LLM01 - Prompt Injection"
+        - "LLM02 - Insecure Output Handling"
+        - "LLM03 - Training Data Poisoning"
+        - "LLM04 - Model Denial of Service"
+        - "LLM05 - Supply Chain Vulnerabilities"
+        - "LLM06 - Sensitive Information Disclosure"
+        - "LLM07 - Insecure Plugin Design"
+        - "LLM08 - Excessive Agency"
+        - "LLM09 - Overreliance"
+        - "LLM10 - Model Theft"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: difficulty
+    attributes:
+      label: Difficulty Level
+      description: Target audience difficulty for this write-up.
+      options:
+        - Beginner
+        - Intermediate
+        - Advanced
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Severity level of the vulnerability or topic covered.
+      options:
+        - Low
+        - Medium
+        - High
+        - Critical
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: >
+        Provide a concise summary of the write-up. What vulnerability or concept
+        does it cover? What is the educational value?
+      placeholder: "This write-up covers indirect prompt injection via untrusted document ingestion in RAG pipelines..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: outline
+    attributes:
+      label: Write-up Outline
+      description: >
+        Provide a high-level outline of the sections you plan to include
+        (e.g., Introduction, Attack Scenario, Mitigation, References).
+      placeholder: |
+        1. Introduction
+        2. Attack scenario
+        3. Real-world examples
+        4. Detection strategies
+        5. Mitigations
+        6. References
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Submission Checklist
+      options:
+        - label: I have read CONTRIBUTING.md and my content meets the guidelines.
+          required: true
+        - label: This content is original and does not reproduce copyrighted material without attribution.
+          required: true
+        - label: No credentials, API keys, tokens, or personally identifiable information (PII) are included.
+          required: true
