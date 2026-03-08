@@ -42,3 +42,16 @@ next-env.d.ts
 
 # velite output
 .velite
+
+# OS Junk
+Thumbs.db
+
+# Build additions
+node_modules/
+dist/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
