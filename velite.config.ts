@@ -54,6 +54,9 @@ const writeups = defineCollection({
     ...baseFields,
     difficulty,
     severity,
+    // The single real-world-grounded truth a practitioner must carry away.
+    // Rendered prominently at the top so the reality leads, not trails.
+    keyTakeaway: s.string().max(500).optional(),
     cvssScore: s.number().min(0).max(10).optional(),
     cvssVector: s.string().optional(),
     relatedLabs: s.array(s.string()).default([]),

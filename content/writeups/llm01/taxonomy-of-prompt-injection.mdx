@@ -5,6 +5,7 @@ owaspCategory: llm01
 owaspVersion: "2025"
 difficulty: intermediate
 severity: critical
+keyTakeaway: "Prompt injection cannot be patched away at the model level — it can only be contained. What an agent is allowed to do (its tools, data access, and autonomy) sets the blast radius of a successful attack, so design for least privilege and assume some injected instructions will always get through."
 cvssScore: 9.1
 cvssVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
 tags: ["prompt-injection", "llm01", "jailbreak", "indirect-injection", "system-prompt"]
@@ -153,8 +154,4 @@ Follow the principle of least privilege: an LLM agent that only needs to read a 
 
 ## Conclusion
 
-Prompt injection will remain a first-class threat as long as LLMs process instructions and data in the same context window. Developers must treat every external input — user text, retrieved documents, API responses, tool outputs — as a potential injection vector. Defense-in-depth combining input screening, output validation, privilege separation, and human oversight offers the strongest practical protection today.
-
-<Callout type="warning">
-Prompt injection cannot be fully solved at the model level alone. Architectural decisions — what tools an agent can call, what data it can access, and what actions it can take autonomously — determine the blast radius of a successful attack.
-</Callout>
+Prompt injection will remain a first-class threat as long as LLMs process instructions and data in the same context window. Developers must treat every external input — user text, retrieved documents, API responses, tool outputs — as a potential injection vector. Defense-in-depth combining input screening, output validation, privilege separation, and human oversight offers the strongest practical protection today — but, as stated at the top, containment beats cure: the architecture around the model, not the model itself, is what bounds the damage.

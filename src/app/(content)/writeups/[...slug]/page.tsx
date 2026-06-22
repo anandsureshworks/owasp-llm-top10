@@ -8,6 +8,7 @@ import { TableOfContents } from "@/components/layout/TableOfContents";
 import { MDXContent } from "@/components/mdx/MDXContent";
 import { formatDate } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { Anchor } from "lucide-react";
 
 interface PageProps {
   params: Promise<{ slug: string[] }>;
@@ -128,6 +129,18 @@ export default async function WriteupPage({ params }: PageProps) {
             </div>
           )}
         </header>
+
+        {writeup.keyTakeaway && (
+          <div className="mb-8 rounded-lg border border-primary/30 bg-primary/5 p-4">
+            <p className="mb-1.5 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-widest text-primary">
+              <Anchor className="size-4" aria-hidden="true" />
+              The bottom line
+            </p>
+            <p className="text-sm leading-relaxed text-foreground">
+              {writeup.keyTakeaway}
+            </p>
+          </div>
+        )}
 
         <div className="prose prose-sm max-w-none dark:prose-invert">
           <MDXContent code={writeup.body} />
