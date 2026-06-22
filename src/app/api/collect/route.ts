@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 
 // Engagement signal collector. Receives first-party beacons from the site and
@@ -80,9 +81,12 @@ export async function POST(req: Request) {
   }
 
   // Append-only by writing a fresh object per flush — no read-modify-write, so
-  // concurrent beacons never race.
+  // concurrent beacons never race. The object path is built ONLY from
+  // server-controlled values (server date + a server-generated id); the
+  // user-provided session lives inside the record body, never in the request
+  // URL, so a crafted session can't forge the GitHub request path (SSRF).
   const day = record.generated_at.slice(0, 10);
-  const path = `events/${day}/${record.session.slice(0, 8)}-${Date.now()}.json`;
+  const path = `events/${day}/${randomUUID()}.json`;
   const content = Buffer.from(JSON.stringify(record, null, 2)).toString("base64");
 
   const controller = new AbortController();
