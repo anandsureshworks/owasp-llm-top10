@@ -9,6 +9,8 @@ import { MDXContent } from "@/components/mdx/MDXContent";
 import { formatDate } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Anchor } from "lucide-react";
+import { SignalsBeacon } from "@/components/feedback/SignalsBeacon";
+import { FeedbackWidget } from "@/components/feedback/FeedbackWidget";
 
 interface PageProps {
   params: Promise<{ slug: string[] }>;
@@ -173,6 +175,9 @@ export default async function WriteupPage({ params }: PageProps) {
             </ol>
           </section>
         )}
+
+        <FeedbackWidget slug={writeup.slug} />
+        <SignalsBeacon slug={writeup.slug} />
       </article>
 
       {/* Sidebar ToC */}
