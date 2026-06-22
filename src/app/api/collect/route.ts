@@ -107,7 +107,14 @@ export async function POST(req: Request) {
       signal: controller.signal,
     });
     if (!res.ok) {
-      return NextResponse.json({ ok: false, error: "sink write failed" }, { status: 502 });
+      // Surface GitHub's status + reason (no token, no secrets) so a sink
+      // misconfiguration is diagnosable. 401 = bad token, 403 = missing
+      // Contents:write, 404 = token not granted to this repo.
+      const detail = (await res.json().catch(() => ({}))) as { message?: string };
+      return NextResponse.json(
+        { ok: false, error: "sink write failed", github_status: res.status, github_message: detail.message },
+        { status: 502 }
+      );
     }
   } catch {
     return NextResponse.json({ ok: false, error: "sink timeout" }, { status: 504 });
