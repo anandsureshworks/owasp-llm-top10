@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.anandsureshworks.engagement-engine</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/anandsuresh/owasp-llm-top10/engine/engagement-engine.py</string>
+  </array>
+
+  <!-- launchd starts with a minimal PATH; gh lives in homebrew. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <!-- Refresh every 30 min. Report age > 2x this (60 min) is an incident. -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/anandsuresh/Library/Logs/engagement-engine.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/anandsuresh/Library/Logs/engagement-engine.log</string>
+</dict>
+</plist>
