@@ -40,6 +40,22 @@ const SEVERITY_COLORS: Record<string, string> = {
   critical: "bg-red-950/40 text-red-400 border-red-800/50",
 };
 
+const REVIEW_STATUS: Record<string, { label: string; className: string }> = {
+  draft: { label: "Draft — unreviewed", className: "bg-zinc-900/60 text-zinc-400 border-zinc-700/50" },
+  reviewed: { label: "Reviewed", className: "bg-sky-950/40 text-sky-400 border-sky-800/50" },
+  verified: { label: "Verified", className: "bg-green-950/40 text-green-400 border-green-800/50" },
+};
+
+const REFERENCE_LABELS: Record<string, string> = {
+  owasp: "OWASP",
+  paper: "Paper",
+  advisory: "Advisory",
+  incident: "Incident",
+  tool: "Tool",
+  article: "Article",
+  spec: "Spec",
+};
+
 export default async function WriteupPage({ params }: PageProps) {
   const { slug: slugParts } = await params; const slug = "writeups/" + slugParts.join("/");
   const writeup = getWriteupBySlug(slug);
@@ -69,10 +85,19 @@ export default async function WriteupPage({ params }: PageProps) {
               {writeup.severity}
             </span>
             {writeup.cvssScore !== undefined && (
-              <span className="rounded border border-border px-2 py-0.5 font-mono text-xs text-muted-foreground">
+              <span
+                title={writeup.cvssVector}
+                className="rounded border border-border px-2 py-0.5 font-mono text-xs text-muted-foreground"
+              >
                 CVSS {writeup.cvssScore.toFixed(1)}
               </span>
             )}
+            <span className="rounded border border-border px-2 py-0.5 font-mono text-xs text-muted-foreground">
+              OWASP {writeup.owaspVersion}
+            </span>
+            <span className={`rounded border px-2 py-0.5 font-mono text-xs ${REVIEW_STATUS[writeup.reviewStatus].className}`}>
+              {REVIEW_STATUS[writeup.reviewStatus].label}
+            </span>
           </div>
 
           <h1 className="mb-2 font-mono text-2xl font-bold text-foreground lg:text-3xl">
@@ -82,11 +107,15 @@ export default async function WriteupPage({ params }: PageProps) {
 
           <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
             <span>By {writeup.author}</span>
+            {writeup.reviewedBy && <span>Reviewed by {writeup.reviewedBy}</span>}
             <span>
               <time dateTime={writeup.publishedAt}>
                 {formatDate(writeup.publishedAt)}
               </time>
             </span>
+            {writeup.cvssVector && (
+              <span className="font-mono">{writeup.cvssVector}</span>
+            )}
           </div>
 
           {writeup.tags.length > 0 && (
@@ -103,6 +132,34 @@ export default async function WriteupPage({ params }: PageProps) {
         <div className="prose prose-sm max-w-none dark:prose-invert">
           <MDXContent code={writeup.body} />
         </div>
+
+        {writeup.references.length > 0 && (
+          <section className="mt-12 border-t border-border pt-6">
+            <h2 className="mb-4 font-mono text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+              References
+            </h2>
+            <ol className="space-y-2 text-sm">
+              {writeup.references.map((ref, i) => (
+                <li key={ref.url} className="flex gap-2">
+                  <span className="select-none text-muted-foreground">[{i + 1}]</span>
+                  <span>
+                    <span className="mr-2 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {REFERENCE_LABELS[ref.type]}
+                    </span>
+                    <a
+                      href={ref.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      {ref.title}
+                    </a>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
       </article>
 
       {/* Sidebar ToC */}
