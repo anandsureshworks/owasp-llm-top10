@@ -16,8 +16,8 @@
 | **CI/CD wiring** | 🔴 **FAIL** | All 4 workflows trigger on `main`; repo default is `master` → **nothing runs** |
 | **Dependency security** | 🔴 **FAIL** | `npm audit`: 16 vulns — **2 critical, 9 high, 5 moderate** |
 | Lint | 🟠 GAP | No ESLint config; CI "Lint & Type Check" job runs only `tsc`, no linter |
-| Standards files | 🟠 PARTIAL | Missing `CHANGELOG.md`, `LICENSE`, `CODE_OF_CONDUCT.md` |
-| OpenSSF Best Practices | 🔴 NOT EARNED | No badge, not registered |
+| Standards files | 🟠 PARTIAL | `LICENSE` added (dual non-commercial, 2026-06-23) + `USAGE.md`; still missing `CHANGELOG.md`, `CODE_OF_CONDUCT.md` |
+| OpenSSF Best Practices | ⚪ **WON'T EARN — by choice** | Non-commercial license is **not** OSI/FLOSS → fails the badge's license criterion. Deliberate tradeoff — see *Decision* below. |
 
 ---
 
@@ -53,17 +53,42 @@ Violates the Yantra standard *"never ship with known CVEs."* All are in **build-
 ## 🟠 Gaps (non-blocking)
 
 - **Lint:** No `eslint` config or `lint` script. The CI job named "Lint & Type Check" performs no linting. Add `eslint-config-next` + a `lint` script and wire it in.
-- **Standards files:** Add `CHANGELOG.md` (semver, per contract), `LICENSE` (an OWASP-aligned educational repo must declare reuse terms — recommend CC-BY-4.0 for content / MIT for code), and `CODE_OF_CONDUCT.md`.
-- **OpenSSF Best Practices badge:** required by contract on every repo. Register at bestpractices.coreinfrastructure.org and embed the badge in `README.md`. Most criteria are already met once CI runs and a LICENSE lands.
+- **Standards files:** `LICENSE` + `USAGE.md` landed 2026-06-23 (see Decision). Still add `CHANGELOG.md` (semver, per contract) and `CODE_OF_CONDUCT.md`.
+- **OpenSSF Best Practices badge:** ~~register~~ — **consciously forgone**, see Decision below. Do **not** re-flag as a gap.
 
 ---
 
-## Recommended order of operations
+## 🔵 Decision (2026-06-23) — non-commercial license; OpenSSF badge forgone
 
-1. **Repoint workflows to `master`** — unblocks all automation (highest leverage, lowest cost).
-2. **`npm audit fix`** + commit lockfile; add `npm audit --audit-level=high` to `ci.yml`.
-3. Add `LICENSE` + `CHANGELOG.md` + `CODE_OF_CONDUCT.md`.
+This repo is licensed **source-available, non-commercial**:
+- **Content** (MDX write-ups/labs/demos) → **CC BY-NC-SA 4.0**
+- **Code** (Next.js app + tooling) → **PolyForm Noncommercial 1.0.0** (`LICENSE-CODE`)
+
+**Why:** the content exists so people **self-learn AI fluency / LLM security** — the
+intended engagement is learning, not resale. Non-commercial terms deter commercial
+profiteering while still letting people clone, run, learn, and build on it
+(see `USAGE.md`).
+
+**The tradeoff, named so it isn't re-litigated:** non-commercial licenses are *not*
+OSI-approved / FLOSS, so this repo **cannot earn the OpenSSF Best Practices badge**
+(its license criterion requires a FLOSS license). This **overrides** the Yantra
+standard *"earn the OpenSSF badge on every repo"* for this repo, by choice. Treat the
+OpenSSF row as **Won't-Earn (intentional)**, not a gap to fix. To revisit, the repo
+would have to relicense to an OSI license (MIT/Apache) — which re-permits commercial
+use, the thing this license exists to prevent.
+
+> ⚠️ **Note:** the rest of this scorecard is **stale** (generated 2026-06-13). The two
+> 🔴 blockers — CI-on-wrong-branch and the 16 CVEs — were since fixed (CI runs on
+> `master`, PRs are green, `npm audit` clean). Re-generate before trusting the rows above.
+
+---
+
+## Recommended order of operations *(stale — most items done; see note above)*
+
+1. ~~Repoint workflows to `master`~~ — done; CI/CodeQL/Vercel run on `master`/PRs.
+2. ~~`npm audit fix`~~ — done; tree is CVE-clean.
+3. ~~Add `LICENSE`~~ — done (non-commercial). Still add `CHANGELOG.md` + `CODE_OF_CONDUCT.md`.
 4. Wire ESLint; rename the CI job honestly or make it lint.
-5. Register OpenSSF badge.
+5. ~~Register OpenSSF badge~~ — **forgone by choice** (see Decision).
 
-*Verified by: `git status`, `npm audit`, `tsc --noEmit`, `npm run build`, workflow inspection. No remediation applied — status only.*
+*Original status verified 2026-06-13 by: `git status`, `npm audit`, `tsc --noEmit`, `npm run build`, workflow inspection. Licensing decision + staleness note added 2026-06-23.*
