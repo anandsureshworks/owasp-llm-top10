@@ -47,7 +47,7 @@ const TOOL_TYPE_LABELS: Record<ToolType, string> = {
 const STATUS_CLASSES: Record<ToolStatus, string> = {
   active: "bg-green-950/40 text-green-400 border-green-800/50",
   maintained: "bg-yellow-950/40 text-yellow-400 border-yellow-800/50",
-  archived: "bg-zinc-800/40 text-zinc-500 border-zinc-700/50",
+  archived: "bg-muted/40 text-muted-foreground border-border",
   experimental: "bg-blue-950/40 text-blue-400 border-blue-800/50",
 };
 

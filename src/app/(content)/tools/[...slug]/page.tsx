@@ -29,7 +29,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-green-950/40 text-green-400 border-green-800/50",
   maintained: "bg-blue-950/40 text-blue-400 border-blue-800/50",
-  archived: "bg-zinc-950/40 text-zinc-400 border-zinc-800/50",
+  archived: "bg-muted/40 text-muted-foreground border-border",
   experimental: "bg-purple-950/40 text-purple-400 border-purple-800/50",
 };
 

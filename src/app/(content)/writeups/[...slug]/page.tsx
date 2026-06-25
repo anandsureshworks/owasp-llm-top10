@@ -44,7 +44,7 @@ const SEVERITY_COLORS: Record<string, string> = {
 };
 
 const REVIEW_STATUS: Record<string, { label: string; className: string }> = {
-  draft: { label: "Draft — unreviewed", className: "bg-zinc-900/60 text-zinc-400 border-zinc-700/50" },
+  draft: { label: "Draft — unreviewed", className: "bg-muted/50 text-muted-foreground border-border" },
   reviewed: { label: "Reviewed", className: "bg-sky-950/40 text-sky-400 border-sky-800/50" },
   verified: { label: "Verified", className: "bg-green-950/40 text-green-400 border-green-800/50" },
 };
