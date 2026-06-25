@@ -12,6 +12,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 
 const NAV_LINKS = [
   { label: "Home", href: "/" },
@@ -74,8 +75,9 @@ export function NavBar() {
           ))}
         </div>
 
-        {/* Desktop GitHub */}
-        <div className="hidden items-center md:flex">
+        {/* Desktop actions */}
+        <div className="hidden items-center gap-4 md:flex">
+          <ThemeToggle />
           <a
             href={GITHUB_URL}
             target="_blank"
@@ -87,8 +89,12 @@ export function NavBar() {
           </a>
         </div>
 
-        {/* Mobile hamburger */}
-        <Sheet open={open} onOpenChange={setOpen}>
+        {/* Mobile actions */}
+        <div className="flex items-center gap-1 md:hidden">
+          <ThemeToggle />
+
+          {/* Mobile hamburger */}
+          <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger
             aria-label="Open navigation menu"
             className="inline-flex items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:text-primary md:hidden"
@@ -130,7 +136,8 @@ export function NavBar() {
               </div>
             </div>
           </SheetContent>
-        </Sheet>
+          </Sheet>
+        </div>
       </nav>
     </header>
   );

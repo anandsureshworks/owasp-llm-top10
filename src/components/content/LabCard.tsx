@@ -30,9 +30,9 @@ export interface LabCardProps {
 }
 
 const DIFFICULTY_CLASSES: Record<Difficulty, string> = {
-  beginner: "bg-green-950/40 text-green-400 border-green-800/50",
-  intermediate: "bg-yellow-950/40 text-yellow-400 border-yellow-800/50",
-  advanced: "bg-red-950/40 text-red-400 border-red-800/50",
+  beginner: "bg-green-100/70 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-300 dark:border-green-800/50",
+  intermediate: "bg-yellow-100/70 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800/50",
+  advanced: "bg-red-100/70 dark:bg-red-950/40 text-red-700 dark:text-red-400 border-red-300 dark:border-red-800/50",
 };
 
 const CHALLENGE_TYPE_LABELS: Record<ChallengeType, string> = {
