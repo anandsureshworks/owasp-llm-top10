@@ -31,6 +31,10 @@ export const metadata: Metadata = {
     "LLM Top 10",
   ],
   authors: [{ name: "OWASP LLM Top 10 Community" }],
+  metadataBase: new URL("https://anandsureshworks.dev"),
+  alternates: {
+    types: { "application/atom+xml": "/feed.xml" },
+  },
   openGraph: {
     type: "website",
     locale: "en_US",
