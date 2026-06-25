@@ -25,16 +25,16 @@ export interface WriteupCardProps {
 }
 
 const DIFFICULTY_CLASSES: Record<Difficulty, string> = {
-  beginner: "bg-green-950/40 text-green-400 border-green-800/50",
-  intermediate: "bg-yellow-950/40 text-yellow-400 border-yellow-800/50",
-  advanced: "bg-red-950/40 text-red-400 border-red-800/50",
+  beginner: "bg-green-100/70 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-300 dark:border-green-800/50",
+  intermediate: "bg-yellow-100/70 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800/50",
+  advanced: "bg-red-100/70 dark:bg-red-950/40 text-red-700 dark:text-red-400 border-red-300 dark:border-red-800/50",
 };
 
 const SEVERITY_CLASSES: Record<Severity, string> = {
-  low: "bg-blue-950/40 text-blue-400 border-blue-800/50",
-  medium: "bg-yellow-950/40 text-yellow-400 border-yellow-800/50",
-  high: "bg-orange-950/40 text-orange-400 border-orange-800/50",
-  critical: "bg-red-950/40 text-red-400 border-red-800/50",
+  low: "bg-blue-100/70 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border-blue-300 dark:border-blue-800/50",
+  medium: "bg-yellow-100/70 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-800/50",
+  high: "bg-orange-100/70 dark:bg-orange-950/40 text-orange-700 dark:text-orange-400 border-orange-300 dark:border-orange-800/50",
+  critical: "bg-red-100/70 dark:bg-red-950/40 text-red-700 dark:text-red-400 border-red-300 dark:border-red-800/50",
 };
 
 export function WriteupCard({
