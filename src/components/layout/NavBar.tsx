@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, Github, Terminal } from "lucide-react";
+import { Menu, Github } from "lucide-react";
 import {
   Sheet,
   SheetContent,
@@ -64,7 +64,8 @@ export function NavBar() {
           href="/"
           className="flex items-center gap-2 font-mono text-sm font-semibold text-primary"
         >
-          <Terminal className="size-4 shrink-0" aria-hidden="true" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/as-logo.svg" alt="" width={28} height={28} className="size-7 shrink-0" />
           <span>OWASP LLM Top 10</span>
         </Link>
 
@@ -109,7 +110,8 @@ export function NavBar() {
                   onClick={() => setOpen(false)}
                   className="flex items-center gap-2 font-mono text-sm font-semibold text-primary"
                 >
-                  <Terminal className="size-4 shrink-0" aria-hidden="true" />
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/brand/as-logo.svg" alt="" width={28} height={28} className="size-7 shrink-0" />
                   <span>OWASP LLM Top 10</span>
                 </Link>
               </SheetTitle>

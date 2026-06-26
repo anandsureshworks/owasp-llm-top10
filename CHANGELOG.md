@@ -8,6 +8,12 @@ versioning follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Brand mark — woven AS monogram** — replaces the generic terminal-prompt
+  (`>_`) nav icon and the default favicon. A dependency-free SVG where the "AS"
+  is woven into a dense twill: green (security) threads carried *under* the white
+  (application) ground, surfacing only to form the letters. Generated from a
+  single committed source (`scripts/gen_mark.py`) so it can be reproduced or
+  retrademarked; nav + `app/icon.svg` favicon, ~3–7 KB gzipped.
 - **Content authority layer** — per-document `owaspVersion` (pinned to the OWASP
   LLM Top 10 **2025** edition), typed `references[]`, `cvssVector`, and
   `reviewStatus` / `reviewedBy`, all surfaced on write-up pages. The LLM01
